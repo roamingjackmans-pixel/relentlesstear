@@ -1,0 +1,5 @@
+{
+  "_note": "Throwaway accounts for the LOCAL dev server only (npm run dev / launch config 'relentlesstear-dev', data in a temp folder). Used by the co-op end-to-end test. Never used on the live site.",
+  "host": { "email": "host.mender@example.test", "password": "local-dev-host-1", "name": "HostAsh" },
+  "guest": { "email": "guest.mender@example.test", "password": "local-dev-guest-1", "name": "GuestCorin" }
+}
