@@ -692,7 +692,7 @@ export class Game {
       }
     }
     const rw = applyRewards(fin, s, this.profile, 'host', enc);
-    this.net?.battleEnded(result, fin);
+    this.net?.battleEnded(result, fin, rw);
     if (result === 'won') await showRewards(this, rw);
     else if (rw.classes.length) for (const c of rw.classes) toast(`Class unlocked: ${CLASS_MAP[c]?.name}`);
     if (result !== 'lost' || this.cutDepth > 0) {

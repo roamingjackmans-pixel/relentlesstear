@@ -12,6 +12,8 @@ import { CLASS_MAP, CLASSES } from '../data/classes';
 import { h, notice, toast, uiRoot } from '../ui/dom';
 import { SCENES } from '../world';
 import type { Game } from './game';
+import type { Rewards } from './rewards';
+import { showRewards } from '../ui/menus';
 import type { SaveData } from './state';
 
 type Msg = { t: string; [k: string]: unknown };
@@ -93,8 +95,8 @@ export class HostSync {
     this.cast({ t: 'battle', enc, st, items, seats: this.coop.seats });
   }
 
-  battleEnded(result: string, st: BState): void {
-    this.cast({ t: 'battleEnd', result, tally: st.tally, save: this.game.save });
+  battleEnded(result: string, st: BState, rw?: Rewards): void {
+    this.cast({ t: 'battleEnd', result, tally: st.tally, save: this.game.save, rewards: rw ? { xp: rw.xp, glim: rw.glim, items: rw.items, levels: rw.levels, patterns: rw.patterns, mastered: rw.mastered, ranks: rw.ranks, classes: [] } : null });
   }
 
   tick(dt: number): void {
@@ -237,6 +239,8 @@ export class GuestMirror {
         }
         // guests' own Tasks are saved to their own account
         this.saveGuestProfile();
+        // the same Victory screen the host sees (classes unlocked for this guest were toasted above)
+        if (m.result === 'won' && m.rewards) void showRewards(g, m.rewards as Rewards);
         break;
       }
       case 'closed':

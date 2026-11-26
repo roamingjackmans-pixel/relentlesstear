@@ -174,6 +174,7 @@ export class Battle {
   speedUp = 1;
   private lastDefenseKind = '';
   defBtns: HTMLElement | null = null;
+  private ended = false;
   /** co-op guests: the host's state at the start of a turn, adopted to undo any drift */
   pendingSync: { st: BState; items: Record<string, number> } | null = null;
 
@@ -360,7 +361,9 @@ export class Battle {
     // someone else's character (or the host's AI, seen by a guest)
     this.hint = `${u.name} is deciding…`;
     for (;;) {
-      const got = await Promise.race([this.link!.waitAct(this.st.turn, u.uid), this.untilAi(u.uid)]);
+      // only a seat that a player held can be handed to the AI mid-fight (the host's own AI acts by message)
+      const handoff: Promise<'ai'> = u.ctrl !== 'ai' ? this.untilAi(u.uid) : new Promise(() => {});
+      const got = await Promise.race([this.link!.waitAct(this.st.turn, u.uid), handoff]);
       this.hint = '';
       if (got === 'ai') {
         // the player left: the host plays this seat from now on (and tells everyone what it did)
@@ -381,7 +384,7 @@ export class Battle {
   private untilAi(uid: string): Promise<'ai'> {
     return new Promise((res) => {
       const iv = setInterval(() => {
-        if (E.unit(this.st, uid)?.ctrl === 'ai' || this.st.phase !== 'turn') {
+        if (E.unit(this.st, uid)?.ctrl === 'ai' || this.st.phase !== 'turn' || this.ended) {
           clearInterval(iv);
           res('ai');
         }
@@ -1889,6 +1892,7 @@ export class Battle {
   }
 
   destroy(): void {
+    this.ended = true;
     this.closeMenu();
     this.setDefButtons(false);
     this.qte = null;
