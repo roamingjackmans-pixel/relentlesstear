@@ -1,0 +1,8 @@
+node_modules
+/dist
+/data
+.env
+*.tmp
+.claude/worktrees
+test-results
+site

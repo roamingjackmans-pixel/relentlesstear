@@ -1,0 +1,25 @@
+{
+  "name": "relentlesstear",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Relentless Tear: a story-driven 2D RPG with reactive turn-based combat, solo or 4-player co-op. Accounts shared with Shoallhell.",
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "dev:client": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "socket.io-client": "^4.8.4"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "typescript": "6.0.3",
+    "vite": "8.3.5",
+    "vitest": "5.1.0"
+  }
+}

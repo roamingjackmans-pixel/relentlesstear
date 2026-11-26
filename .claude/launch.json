@@ -1,0 +1,18 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "relentlesstear-dev",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "scripts/dev.mjs"
+      ],
+      "port": 5180,
+      "env": {
+        "SHOALLHELL_PORT": "3041",
+        "SHOALLHELL_SERVER": "http://localhost:3041",
+        "EMAIL_PROVIDER": "file"
+      }
+    }
+  ]
+}
