@@ -536,6 +536,8 @@ export class Game {
     if (this.busy > 0) return;
     if (o.before && !flagOn(this.save, `seen:${o.before}`)) await this.runCutscene(o.before);
     if (flagOn(this.save, `beat:${o.enc}`)) return;
+    // a boss is a checkpoint: the party steadies itself first, and retries start from here
+    for (const id of this.save.roster) this.save.chars[id].hpFrac = 1;
     const r = await this.battle(o.enc, {});
     if ((r === 'won' || r === 'scripted') && o.after) await this.runCutscene(o.after);
   }
@@ -547,14 +549,20 @@ export class Game {
       console.warn('[rt] missing encounter', encId);
       return 'won';
     }
-    if (o.noFlee) enc.noFlee = true;
     this.busy++;
+    // Try again puts everyone back as they were when the fight began
+    const snap = { hp: Object.fromEntries(this.save.roster.map((id) => [id, this.save.chars[id].hpFrac])), tinct: { ...this.save.tinct }, inv: { ...this.save.inv } };
     try {
       for (;;) {
-        const r = await this.fight(encId, o.first ?? null);
+        const r = await this.fight(encId, o.first ?? null, !!o.noFlee);
         if (r === 'lost' && !o.loseOk) {
           const again = await this.gameOver();
-          if (again) continue;
+          if (again) {
+            for (const [id, f] of Object.entries(snap.hp)) if (this.save.chars[id as CharId]) this.save.chars[id as CharId].hpFrac = f;
+            this.save.tinct = { ...snap.tinct };
+            this.save.inv = { ...snap.inv };
+            continue;
+          }
           // back to the last Waystitch
           restoreParty(this.save);
           if (this.cutDepth > 0) this.abortCutscene = true;
@@ -585,8 +593,8 @@ export class Game {
     return party.slice(0, 4);
   }
 
-  private async fight(encId: string, first: 'party' | 'enemy' | null): Promise<BState['phase']> {
-    const enc = ENCOUNTERS[encId];
+  private async fight(encId: string, first: 'party' | 'enemy' | null, noFlee = false): Promise<BState['phase']> {
+    const enc = noFlee ? { ...ENCOUNTERS[encId], noFlee: true } : ENCOUNTERS[encId];
     const s = this.save;
     const party = this.partyFor(encId);
     const ctrl: Partial<Record<CharId, string>> = {};
