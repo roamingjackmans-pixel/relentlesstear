@@ -624,6 +624,7 @@ export class Game {
     const result = await this.battleScr.run();
     const fin = this.battleScr.st;
     this.battleScr.destroy();
+    this.fx.clear();
     this.coop?.resetBattle();
     // tinctures and items back to the save
     for (const k of Object.keys(s.tinct)) s.tinct[k] = items[k] ?? s.tinct[k];

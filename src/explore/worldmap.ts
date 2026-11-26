@@ -150,10 +150,26 @@ export class WorldMap {
       g.stroke();
       g.setLineDash([]);
       g.restore();
-      g.font = '400 20px "IM Fell English SC", Georgia';
+    }
+    // labels last, on little parchment tags, so no patch covers another's name
+    for (const r of REGION_LIST) {
+      const [x, y] = this.pos(r);
+      const open = this.open(r);
+      const label = open ? r.name : '?';
+      g.font = '400 19px "IM Fell English SC", Georgia';
       g.textAlign = 'center';
-      g.fillStyle = open ? '#2a1a12' : 'rgba(90,70,50,0.5)';
-      g.fillText(open ? r.name : '?', x, y + 92);
+      const tw = g.measureText(label).width + 18;
+      g.fillStyle = open ? 'rgba(243,230,200,0.92)' : 'rgba(200,180,150,0.5)';
+      g.beginPath();
+      g.roundRect(x - tw / 2, y + 60, tw, 26, 8);
+      g.fill();
+      g.strokeStyle = 'rgba(160,110,40,0.6)';
+      g.setLineDash([4, 3]);
+      g.lineWidth = 1;
+      g.stroke();
+      g.setLineDash([]);
+      g.fillStyle = open ? '#2a1a12' : 'rgba(90,70,50,0.6)';
+      g.fillText(label, x, y + 79);
     }
     applyGrain(g, W, H, 0.1);
     g.font = '400 34px "IM Fell English SC", Georgia';

@@ -6,6 +6,7 @@ import type { BState, Ev } from '../battle/types';
 import type { CharId, Expr, Pose } from '../data/types';
 import { Explore } from '../explore/explore';
 import type { Coop } from '../net/coop';
+import { api } from '../net/api';
 import { ENCOUNTERS } from '../data/encounters';
 import { CLASS_MAP, CLASSES } from '../data/classes';
 import { h, notice, toast, uiRoot } from '../ui/dom';
@@ -229,10 +230,8 @@ export class GuestMirror {
 
   private saveGuestProfile(): void {
     // a guest's profile holds their own saves; only Tasks and classes changed
-    void import('../net/api').then(({ api }) => {
-      if (!this.game.user) return;
-      api.save(this.game.profile, this.game.rev).then((r) => (this.game.rev = r.rev)).catch(() => {});
-    });
+    if (!this.game.user) return;
+    api.save(this.game.profile, this.game.rev).then((r) => (this.game.rev = r.rev)).catch(() => {});
   }
 
   private enterScene(id: string, x: number): void {
