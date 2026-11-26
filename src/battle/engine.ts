@@ -252,13 +252,14 @@ export function createBattle(save: SaveData, enc: EncounterDef, o: CreateOpts, t
 
 // ------------------------------------------------------------------ statuses
 
-export function addStatus(u: Unit, id: StatusId, turns: number, n: number): void {
+export function addStatus(u: Unit, id: StatusId, turns: number, n: number, fresh = false): void {
   const cur = u.statuses.find((s) => s.id === id);
   const maxStacks = id === 'burn' ? 10 : id === 'shield' ? 5 : 1;
   if (cur) {
     cur.turns = Math.max(cur.turns, turns);
     cur.stacks = Math.min(maxStacks, cur.stacks + n);
-  } else u.statuses.push({ id, turns, stacks: Math.min(maxStacks, Math.max(1, n)) });
+    if (fresh) cur.fresh = true;
+  } else u.statuses.push({ id, turns, stacks: Math.min(maxStacks, Math.max(1, n)), ...(fresh ? { fresh: true } : {}) });
 }
 
 function tryStatus(st: BState, src: Unit | null, u: Unit, id: StatusId, turns: number, n: number, chance: number, key: string, evs: Ev[]): boolean {
@@ -272,7 +273,7 @@ function tryStatus(st: BState, src: Unit | null, u: Unit, id: StatusId, turns: n
   let c = chance;
   if (u.boss && (id === 'stun' || id === 'freeze')) c *= id === 'stun' ? 0.4 : 0.3;
   if (rnd(st, 'st', key, u.uid, id) >= c) return false;
-  addStatus(u, id, id === 'burn' || id === 'shield' ? Math.max(turns, 3) : turns, n);
+  addStatus(u, id, id === 'burn' || id === 'shield' ? Math.max(turns, 3) : turns, n, st.actor === u.uid);
   evs.push({ e: 'status', uid: u.uid, id, stacks: n });
   if (src && src.side === 'party') {
     if (id === 'burn') tally(st, src, 'burn');
@@ -359,7 +360,14 @@ export function endTurn(st: BState, uid: string): Ev[] {
   const u = unit(st, uid);
   const evs: Ev[] = [];
   if (u) {
-    for (const s of u.statuses) if (!['burn', 'shield', 'marked', 'curse'].includes(s.id)) s.turns--;
+    for (const s of u.statuses) {
+      if (['burn', 'shield', 'marked', 'curse'].includes(s.id)) continue;
+      if (s.fresh) {
+        s.fresh = false;
+        continue;
+      }
+      s.turns--;
+    }
     const gone = u.statuses.filter((s) => !['burn', 'shield', 'marked', 'curse'].includes(s.id) && s.turns <= 0);
     for (const g of gone) evs.push({ e: 'unstatus', uid: u.uid, id: g.id });
     u.statuses = u.statuses.filter((s) => !gone.includes(s));
@@ -422,7 +430,7 @@ function hurt(st: BState, src: Unit | null, u: Unit, n: number, evs: Ev[], o: Hu
     const def = ENEMIES[u.id];
     const ph = def?.phases?.find((p) => u.hp <= p.at * u.maxHp);
     if (ph && ENEMIES[ph.to]) {
-      if (u.hp <= 0) u.hp = 1;
+      u.hp = Math.max(1, u.hp, Math.floor(ph.at * u.maxHp));
       transform(u, ENEMIES[ph.to], st.ng);
       evs.push({ e: 'phase', uid: u.uid, to: ph.to, line: ph.line });
       st.banner = ph.line ?? null;
@@ -435,11 +443,12 @@ function hurt(st: BState, src: Unit | null, u: Unit, n: number, evs: Ev[], o: Hu
     }
   }
   if (u.hp <= 0) {
+    const wasBurning = stacks(u, 'burn') > 0;
     u.hp = 0;
     u.ko = true;
     u.statuses = [];
     evs.push({ e: 'ko', uid: u.uid });
-    if (u.side === 'enemy') onEnemyDown(st, src, u, evs);
+    if (u.side === 'enemy') onEnemyDown(st, src, u, evs, wasBurning);
     else {
       u.ap = 0;
       u.guard = 0;
@@ -469,14 +478,14 @@ function transform(u: Unit, def: EnemyDef, ng: number): void {
   u.statuses = u.statuses.filter((s) => s.id === 'burn' || s.id === 'shock');
 }
 
-function onEnemyDown(st: BState, src: Unit | null, u: Unit, evs: Ev[]): void {
+function onEnemyDown(st: BState, src: Unit | null, u: Unit, evs: Ev[], burning: boolean): void {
   const def = ENEMIES[u.id];
   const wick = st.units.find((p) => p.side === 'party' && p.id === 'wick' && !p.ko);
   if (wick && def) {
     for (const a of def.attacks) if (a.pattern && !st.learned.includes(a.pattern)) st.learned.push(a.pattern);
   }
   if (src && src.side === 'party' && hasP(src, 'harvest')) gainAp(src, 1, evs);
-  if (stacks(u, 'burn') > 0 || u.statuses.length === 0) {
+  if (burning) {
     const spreader = st.units.find((p) => p.side === 'party' && hasP(p, 'wildfire'));
     if (spreader) for (const e of alive(st, 'enemy')) tryStatus(st, spreader, e, 'burn', 3, 2, 1, `wf${u.uid}`, evs);
   }
@@ -1050,7 +1059,7 @@ export function useItem(st: BState, uid: string, item: string, tid: string, item
 }
 
 export function tryFlee(st: BState, uid: string): boolean {
-  if (st.noFlee) return false;
+  if (st.noFlee || st.phase !== 'turn') return false;
   const pa = alive(st, 'party');
   const en = alive(st, 'enemy');
   const ps = pa.reduce((a, u) => a + effSpd(u), 0) / Math.max(1, pa.length);
@@ -1118,8 +1127,8 @@ export function planEnemy(st: BState, uid: string): EnemyPlan {
   if (atk && atk.hits.length) {
     const taunt = party.filter((p) => has(p, 'taunt'));
     if (atk.target === 'all') targets = party.map((p) => p.uid);
-    else if (atk.target === 'lowest') targets = [[...party].sort((a, b) => a.hp / a.maxHp - b.hp / b.maxHp)[0]?.uid].filter(Boolean) as string[];
     else if (taunt.length) targets = [taunt[0].uid];
+    else if (atk.target === 'lowest') targets = [[...party].sort((a, b) => a.hp / a.maxHp - b.hp / b.maxHp)[0]?.uid].filter(Boolean) as string[];
     else {
       const n = atk.target === 'random2' ? Math.min(2, party.length) : 1;
       const pool2 = [...party];
@@ -1232,7 +1241,7 @@ export function finishEnemy(st: BState, plan: EnemyPlan, defs: Record<string, De
   }
   if (!a.ko) {
     if (atk.selfStatus) {
-      addStatus(a, atk.selfStatus.id, atk.selfStatus.turns ?? 2, atk.selfStatus.stacks ?? 1);
+      addStatus(a, atk.selfStatus.id, atk.selfStatus.turns ?? 2, atk.selfStatus.stacks ?? 1, true);
       evs.push({ e: 'status', uid: a.uid, id: atk.selfStatus.id });
     }
     if (atk.heal) heal(st, a, a, a.maxHp * atk.heal, evs, false);
@@ -1295,7 +1304,7 @@ export function aiAction(st: BState, uid: string, items: Record<string, number>)
   const friends = alive(st, 'party');
   const down = st.units.filter((p) => p.side === 'party' && p.ko);
   if (!foes.length) return { k: 'pass' };
-  const usable = u.skills.map((id) => skill(id)).filter((s): s is SkillDef => !!s && !cannotUse(st, u, s));
+  const usable = u.skills.map((id) => skill(id)).filter((s): s is SkillDef => !!s && !cannotUse(st, u, s) && !s.effects?.some((e) => e.k === 'free_shots'));
   const lowest = [...friends].sort((a, b) => a.hp / a.maxHp - b.hp / b.maxHp)[0];
   // revive
   if (down.length) {

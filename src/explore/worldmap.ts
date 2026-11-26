@@ -234,8 +234,10 @@ export class WorldMap {
       input.eat('back');
       input.eat('map');
       audio.sfx('ui_back');
-      if (this.back) void this.game.gotoScene(this.back.scene, this.back.x);
-      else void this.travel(this.at);
+      if (this.back && !this.busy) {
+        this.busy = true;
+        void this.game.gotoScene(this.back.scene, this.back.x);
+      } else void this.travel(this.at);
     }
   }
 

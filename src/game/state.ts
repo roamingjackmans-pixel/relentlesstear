@@ -170,7 +170,11 @@ export function newGamePlus(old: SaveData): SaveData {
   const s = newSave(old.difficulty);
   s.ng = old.ng + 1;
   s.chars = structuredClone(old.chars);
-  for (const id of CHAR_IDS) s.chars[id].bondSeen = [];
+  // bonds are lived again (their Weave Arts come back with them)
+  for (const id of CHAR_IDS) {
+    s.chars[id].bondSeen = [];
+    s.chars[id].bond = 0;
+  }
   s.inv = Object.fromEntries(Object.entries(old.inv).filter(([k]) => !['ferry_bell', 'grapple_spool', 'corins_shield', 'orrins_shears', 'ledger_page', 'lio_ribbon', 'music_box'].includes(k)));
   s.weapons = { ...old.weapons };
   s.patchWins = { ...old.patchWins };
@@ -310,6 +314,21 @@ export function catchUp(s: SaveData, id: CharId): void {
 }
 
 export const flagOn = (s: SaveData, f: string): boolean => !!s.flags[f];
+
+/** Combine two copies of one account's profile: per slot the newer save wins (or, for offline play brought into an
+ *  account, offline saves only fill empty slots); Tasks keep the higher count; unlocked classes add up. */
+export function mergeProfiles(base: Profile, other: Profile, fillOnly: boolean): Profile {
+  const out: Profile = { ...base, slots: [...base.slots], tasks: { ...base.tasks }, classes: [...base.classes] };
+  for (let i = 0; i < Math.max(out.slots.length, other.slots.length); i++) {
+    const a = out.slots[i] ?? null;
+    const b = other.slots[i] ?? null;
+    if (!b) continue;
+    if (!a || (!fillOnly && (b.updated ?? 0) > (a.updated ?? 0))) out.slots[i] = b;
+  }
+  for (const [k, n] of Object.entries(other.tasks)) out.tasks[k] = Math.max(out.tasks[k] ?? 0, n);
+  for (const c of other.classes) if (!out.classes.includes(c)) out.classes.push(c);
+  return out;
+}
 
 export function restoreParty(s: SaveData): void {
   for (const id of s.roster) s.chars[id].hpFrac = 1;

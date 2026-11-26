@@ -40,6 +40,8 @@ export interface Actor {
   emoteT: number;
   talking: boolean;
   party: boolean;
+  /** what it was made from (a CharId, NPC id or enemy id) */
+  kind?: string;
   scale: number;
   seed: number;
   vy: number;
@@ -135,6 +137,7 @@ export class Explore {
   }
 
   applyKind(a: Actor, kind: string): void {
+    a.kind = kind;
     a.fig = null;
     a.bobbin = false;
     a.enemyArt = undefined;
@@ -175,7 +178,7 @@ export class Explore {
   }
 
   get lead(): Actor {
-    return this.actors.get(this.leader)!;
+    return this.actors.get(this.leader) ?? [...this.actors.values()].find((a) => a.party) ?? [...this.actors.values()][0];
   }
 
   // ------------------------------------------------------------------ update
@@ -192,12 +195,15 @@ export class Explore {
     this.updateCamera(dt);
     if (this.grade.amt !== this.grade.target) this.grade.amt = lerp(this.grade.amt, this.grade.target, Math.min(1, dt * 2));
     this.vfx = this.vfx.filter((v) => (v.t += dt) < v.dur);
-    if (controls && !this.remote) {
+    // one thing at a time: a battle, a cutscene, a conversation or an exit, never two in one frame
+    if (controls && !this.remote && this.game.busy === 0) {
       this.checkTriggers();
+      if (this.game.busy > 0) return;
       this.updatePrompt();
       if (this.prompt && input.pressed('interact')) {
         input.eat('interact');
         void this.interact();
+        return;
       }
       this.checkExits();
     } else this.prompt = null;
@@ -400,6 +406,12 @@ export class Explore {
         }
       }
       if (o.kind === 'boss') {
+        // beaten, but its closing scene never finished (the game was closed): play it now, or the story can stall
+        if (flagOn(s, `beat:${o.enc}`) && o.after && !flagOn(s, `seen:${o.after}`) && !this.triggered.has(`${o.id}:after`)) {
+          this.triggered.add(`${o.id}:after`);
+          void this.game.runCutscene(o.after);
+          return;
+        }
         if (flagOn(s, `beat:${o.enc}`) || (o.requires && !flagOn(s, o.requires))) continue;
         if (Math.abs(L.x - o.x) < 150 && !this.triggered.has(o.id)) {
           this.triggered.add(o.id);

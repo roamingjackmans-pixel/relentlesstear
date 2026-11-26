@@ -46,6 +46,8 @@ export class Coop {
       );
     }
     this.offs.push(net.on('closed', (m: { reason: string }) => this.emit({ t: 'closed', reason: m.reason })));
+    // a guest left on purpose (or for good): their seat goes back to the AI
+    this.offs.push(net.on('guestleft', (m: { userId: string }) => this.emit({ t: 'left', userId: m.userId })));
   }
 
   get isHost(): boolean {

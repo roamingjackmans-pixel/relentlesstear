@@ -92,7 +92,12 @@ export function focusFirst(el: HTMLElement): void {
 export function navigate(): boolean {
   const top = stack[stack.length - 1];
   if (!top) return false;
-  if (input.typing) return true;
+  // a text field keeps the keyboard, but a gamepad can still move on (blurring the field)
+  if (input.typing && input.device !== 'gamepad') return true;
+  if (input.typing && document.activeElement instanceof HTMLElement) {
+    document.activeElement.blur();
+    input.typing = false;
+  }
   const items = navItems(top.el);
   const cur = document.activeElement as HTMLElement | null;
   const dirs: [string, number, number][] = [
@@ -147,14 +152,15 @@ export function navigate(): boolean {
     return true;
   }
   if (input.pressed('confirm') && cur && items.includes(cur) && !(cur.tagName === 'INPUT')) {
-    input.eat('confirm');
     cur.click();
+    // nothing else (the world, the next panel) may react to the same press
+    input.eatAll();
     return true;
   }
   if (input.pressed('back') && top.onBack) {
-    input.eat('back');
     audio.sfx('ui_back');
     top.onBack();
+    input.eatAll();
     return true;
   }
   return true;

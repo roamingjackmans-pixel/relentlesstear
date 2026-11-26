@@ -647,8 +647,9 @@ export class Backdrop {
 
   private paintClouds(): HTMLCanvasElement {
     const T = this.theme;
-    const c = makeCanvas(TILE, 360);
+    const c = makeCanvas(TILE / 2, 180);
     const g = ctx2d(c);
+    g.scale(0.5, 0.5);
     if (T.cloudAlpha <= 0) return c;
     const r = rng(99 + this.id.length * 3);
     for (let i = 0; i < 16; i++) {
@@ -843,6 +844,7 @@ export class Backdrop {
     const c = makeCanvas(TILE, 240);
     const g = ctx2d(c);
     const r = rng(555 + this.id.length);
+    g.globalAlpha = 0.9;
     g.fillStyle = F.color;
     g.strokeStyle = F.color;
     const n = Math.round(F.density * 40);
@@ -985,19 +987,22 @@ export class Backdrop {
       }
       ctx.restore();
     }
-    if (this.theme.cloudAlpha > 0) {
-      const off = -((camX * 0.04 + t * 6) % TILE);
-      ctx.drawImage(this.clouds, off, 0);
-      if (off + TILE < W) ctx.drawImage(this.clouds, off + TILE, 0);
-    }
+    if (this.theme.cloudAlpha > 0) this.blit(ctx, this.clouds, camX * 0.04 + t * 6, 0, 0.5);
     for (const s of this.strips) this.blit(ctx, s.canvas, camX * s.par, s.top);
   }
 
-  private blit(ctx: CanvasRenderingContext2D, c: HTMLCanvasElement, scroll: number, top: number): void {
-    let off = -(((scroll % TILE) + TILE) % TILE);
-    while (off < W) {
-      ctx.drawImage(c, off, top);
-      off += TILE;
+  /** Draw a wrapping strip, copying only the part that is on screen (a whole 2560 px strip per layer per frame is
+   *  the single biggest cost on software-rendered canvases). `k` is the strip's resolution relative to the screen. */
+  private blit(ctx: CanvasRenderingContext2D, c: HTMLCanvasElement, scroll: number, top: number, k = 1): void {
+    const tile = TILE;
+    let sx = ((scroll % tile) + tile) % tile;
+    let dx = 0;
+    const h = c.height / k;
+    while (dx < W) {
+      const w = Math.min(tile - sx, W - dx);
+      if (w > 0.5) ctx.drawImage(c, sx * k, 0, w * k, c.height, dx, top, w, h);
+      dx += w;
+      sx = 0;
     }
   }
 
@@ -1017,12 +1022,7 @@ export class Backdrop {
       ctx.fillRect(0, GROUND - 160, W, 220);
     }
     this.drawWeather(ctx, camX, t, dt);
-    if (this.front) {
-      ctx.save();
-      ctx.globalAlpha = 0.9;
-      this.blit(ctx, this.front, camX * 1.25, H - 200);
-      ctx.restore();
-    }
+    if (this.front) this.blit(ctx, this.front, camX * 1.25, H - 200);
   }
 
   private lastCam = 0;
@@ -1034,62 +1034,75 @@ export class Backdrop {
     ctx.save();
     const lighter = w === 'embers' || w === 'motes' || w === 'stars';
     if (lighter) ctx.globalCompositeOperation = 'lighter';
+    // move everything, then draw each weather as ONE path (hundreds of separate fills/strokes are slow)
     for (let i = 0; i < this.parts.length; i++) {
       const p = this.parts[i];
       p.x += p.vx * dt - dcam * 0.9;
       p.y += p.vy * dt;
       p.ph += dt;
       if (p.y > H + 30 || p.y < -40 || p.x < -150 || p.x > W + 150) {
+        const was = p.x;
         this.parts[i] = this.spawn(false);
-        if (p.x < -150) this.parts[i].x = W + 100;
-        if (p.x > W + 150) this.parts[i].x = -100;
-        continue;
+        if (was < -150) this.parts[i].x = W + 100;
+        if (was > W + 150) this.parts[i].x = -100;
       }
-      switch (w) {
-        case 'rain':
-          ctx.strokeStyle = `rgba(200,220,255,${p.a})`;
-          ctx.lineWidth = p.s;
-          ctx.beginPath();
+    }
+    const parts = this.parts;
+    switch (w) {
+      case 'rain':
+        ctx.strokeStyle = 'rgba(200,220,255,0.38)';
+        ctx.lineWidth = 1.1;
+        ctx.beginPath();
+        for (const p of parts) {
           ctx.moveTo(p.x, p.y);
           ctx.lineTo(p.x - 4, p.y - 22);
-          ctx.stroke();
-          break;
-        case 'snow':
-          ctx.fillStyle = 'rgba(255,255,255,0.8)';
-          ctx.beginPath();
-          ctx.arc(p.x + Math.sin(p.ph) * 10, p.y, p.s, 0, TAU);
-          ctx.fill();
-          break;
-        case 'embers':
-          drawGlow(ctx, p.x + Math.sin(p.ph * 3) * 6, p.y, p.s * 4, '#ff9a3a', 0.6 + 0.4 * Math.sin(p.ph * 8));
-          break;
-        case 'motes':
-        case 'stars':
-          drawGlow(ctx, p.x + Math.sin(p.ph) * 8, p.y, p.s * 4, this.theme.seam, 0.35 + 0.3 * Math.sin(p.ph * 2));
-          break;
-        case 'petals':
-          ctx.fillStyle = 'rgba(240,140,90,0.75)';
-          ctx.save();
-          ctx.translate(p.x + Math.sin(p.ph * 2) * 14, p.y);
-          ctx.rotate(p.ph * 2);
-          ctx.beginPath();
-          ctx.ellipse(0, 0, p.s, p.s * 0.5, 0, 0, TAU);
-          ctx.fill();
-          ctx.restore();
-          break;
-        case 'ash':
-          ctx.fillStyle = 'rgba(80,70,70,0.6)';
-          ctx.fillRect(p.x, p.y, p.s, p.s);
-          break;
-        case 'threads':
-          ctx.strokeStyle = rgba(this.theme.seam, 0.45);
-          ctx.lineWidth = 1;
-          ctx.beginPath();
+        }
+        ctx.stroke();
+        break;
+      case 'snow':
+        ctx.fillStyle = 'rgba(255,255,255,0.8)';
+        ctx.beginPath();
+        for (const p of parts) {
+          const x = p.x + Math.sin(p.ph) * 10;
+          ctx.moveTo(x + p.s, p.y);
+          ctx.arc(x, p.y, p.s, 0, TAU);
+        }
+        ctx.fill();
+        break;
+      case 'embers':
+        for (const p of parts) drawGlow(ctx, p.x + Math.sin(p.ph * 3) * 6, p.y, p.s * 4, '#ff9a3a', 0.6 + 0.4 * Math.sin(p.ph * 8));
+        break;
+      case 'motes':
+      case 'stars':
+        for (const p of parts) drawGlow(ctx, p.x + Math.sin(p.ph) * 8, p.y, p.s * 4, this.theme.seam, 0.35 + 0.3 * Math.sin(p.ph * 2));
+        break;
+      case 'petals':
+        ctx.fillStyle = 'rgba(240,140,90,0.75)';
+        ctx.beginPath();
+        for (const p of parts) {
+          const x = p.x + Math.sin(p.ph * 2) * 14;
+          const a = p.ph * 2;
+          ctx.moveTo(x + Math.cos(a) * p.s, p.y + Math.sin(a) * p.s);
+          ctx.ellipse(x, p.y, p.s, p.s * 0.5, a, 0, TAU);
+        }
+        ctx.fill();
+        break;
+      case 'ash':
+        ctx.fillStyle = 'rgba(80,70,70,0.6)';
+        ctx.beginPath();
+        for (const p of parts) ctx.rect(p.x, p.y, p.s, p.s);
+        ctx.fill();
+        break;
+      case 'threads':
+        ctx.strokeStyle = rgba(this.theme.seam, 0.45);
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        for (const p of parts) {
           ctx.moveTo(p.x, p.y);
           ctx.quadraticCurveTo(p.x - p.s * 0.5, p.y + Math.sin(p.ph * 2) * 8, p.x - p.s, p.y + Math.sin(p.ph * 2 + 1) * 4);
-          ctx.stroke();
-          break;
-      }
+        }
+        ctx.stroke();
+        break;
     }
     ctx.restore();
   }
@@ -1106,19 +1119,31 @@ export class Backdrop {
     g.fillStyle = rgba(this.theme.darkColor, d);
     g.fillRect(0, 0, lw, lh);
     g.globalCompositeOperation = 'destination-out';
+    const hole = lightHole();
     for (const L of lights) {
-      const x = L.x / 4;
-      const y = L.y / 4;
       const r = L.r / 4;
-      const gr = g.createRadialGradient(x, y, 0, x, y, r);
-      gr.addColorStop(0, `rgba(0,0,0,${L.a ?? 1})`);
-      gr.addColorStop(1, 'rgba(0,0,0,0)');
-      g.fillStyle = gr;
-      g.fillRect(x - r, y - r, r * 2, r * 2);
+      if (L.x / 4 + r < 0 || L.x / 4 - r > lw) continue;
+      g.globalAlpha = L.a ?? 1;
+      g.drawImage(hole, L.x / 4 - r, L.y / 4 - r, r * 2, r * 2);
     }
+    g.globalAlpha = 1;
     g.globalCompositeOperation = 'source-over';
     ctx.drawImage(this.light, 0, 0, W, H);
   }
+}
+
+/** A soft round hole (opaque centre fading out), cut out of the darkness for each light. */
+let hole: HTMLCanvasElement | null = null;
+function lightHole(): HTMLCanvasElement {
+  if (hole) return hole;
+  hole = makeCanvas(64, 64);
+  const g = ctx2d(hole);
+  const gr = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  gr.addColorStop(0, 'rgba(0,0,0,1)');
+  gr.addColorStop(1, 'rgba(0,0,0,0)');
+  g.fillStyle = gr;
+  g.fillRect(0, 0, 64, 64);
+  return hole;
 }
 
 /** Screen-space vignette, cached. */

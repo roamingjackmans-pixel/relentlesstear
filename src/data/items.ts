@@ -68,7 +68,7 @@ export const PATCHES: PatchDef[] = [
   P('p_mirror_thread', 'Mirror Thread', 5, 'mirror_thread', 'When one of your Shields blocks a hit, the attacker takes damage.'),
   P('p_clean_hands', 'Clean Hands', 4, 'clean_hands', 'At the start of your turn, remove one ailment.'),
   P('p_grandmothers_knot', "Grandmother's Knot", 8, 'grandmothers_knot', 'Start each battle with +2 AP, 1 Shield and Regen.'),
-  P('p_choir_glass', 'Choir Glass', 8, 'choir_glass', 'Perfect parries also Weaken the attacker.', { def: 0.1 }),
+  P('p_choir_glass', 'Choir Glass', 8, 'choir_glass', 'Parries also Weaken the attacker.', { def: 0.1 }),
   P('p_first_thread', 'The First Thread', 10, 'first_thread', '+20% to every stat. Every Perfect input adds +1 AP once per turn.', { hp: 0.2, atk: 0.2, def: 0.2, spd: 0.2 }),
 ];
 export const PATCH_MAP: Record<string, PatchDef> = Object.fromEntries(PATCHES.map((p) => [p.id, p]));

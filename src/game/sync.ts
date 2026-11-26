@@ -49,8 +49,23 @@ export class HostSync {
         if (ch && !Object.entries(coop.seats).some(([k, v]) => k === ch && v !== who)) coop.seats[ch] = who;
         this.cast({ t: 'seats', seats: coop.seats });
       }),
-      coop.on('hello', () => this.sendWorld()),
-      coop.on('room', () => this.cast({ t: 'seats', seats: coop.seats })),
+      // before Start the lobby answers hellos itself; the world is only sent once the game has begun
+      coop.on('hello', () => {
+        if (this.started) this.sendWorld();
+      }),
+      coop.on('room', () => {
+        // free the seats of anyone no longer in the room
+        const here = new Set(coop.room.players.map((p) => p.userId));
+        for (const [k, v] of Object.entries(coop.seats)) if (v && v !== coop.hostId && !here.has(v)) delete coop.seats[k as CharId];
+        this.cast({ t: 'seats', seats: coop.seats });
+      }),
+      coop.on('left', (m) => {
+        const who = String(m.userId);
+        for (const [k, v] of Object.entries(coop.seats)) if (v === who) delete coop.seats[k as CharId];
+        // mid-battle: the host's AI takes their companion so nobody waits forever
+        for (const u of this.game.battleScr?.st.units ?? []) if (u.ctrl === who) u.ctrl = 'ai';
+        this.cast({ t: 'seats', seats: coop.seats });
+      }),
     );
   }
 
@@ -68,7 +83,9 @@ export class HostSync {
     this.cast({ t: 'world', save: g.save, scene: g.explore?.spec.id, x: g.explore?.lead.x ?? 0, seats: this.coop.seats, mode: g.mode });
   }
 
+  started = false;
   sceneChanged(): void {
+    this.started = true;
     this.sendWorld();
   }
 
@@ -87,8 +104,8 @@ export class HostSync {
     const ex = this.game.explore;
     if (!ex) return;
     const actors: SnapActor[] = [];
-    for (const a of ex.actors.values()) actors.push({ id: a.id, x: Math.round(a.x), y: Math.round(a.y), f: a.face, a: a.anim, p: a.pose, h: a.hidden, e: a.emote, party: a.party, w: Math.round(a.walk * 10) / 10 });
-    this.cast({ t: 'snap', scene: ex.spec.id, cam: Math.round(ex.camX), actors, grade: ex.grade, cleared: this.game.save.cleared, roam: ex.roamers.map((r) => [Math.round(r.x), r.dir]) });
+    for (const a of ex.actors.values()) actors.push({ id: a.id, x: Math.round(a.x), y: Math.round(a.y), f: a.face, a: a.anim, p: a.pose, h: a.hidden, e: a.emote, party: a.party, w: Math.round(a.walk * 10) / 10, k: a.kind });
+    this.cast({ t: 'snap', scene: ex.spec.id, leader: ex.leader, cam: Math.round(ex.camX), actors, grade: ex.grade, cleared: this.game.save.cleared, roam: ex.roamers.map((r) => [Math.round(r.x), r.dir]) });
   }
 
   leave(): void {
@@ -141,6 +158,7 @@ export class GuestMirror {
           if (SCENES[String(m.scene)] && g.mode === 'explore') this.enterScene(String(m.scene), 300);
           return;
         }
+        this.clearMapNote();
         ex.camX = Number(m.cam);
         ex.grade = m.grade as Explore['grade'];
         if (g.save) g.save.cleared = m.cleared as string[];
@@ -164,6 +182,7 @@ export class GuestMirror {
           }
         }
         for (const id of [...ex.actors.keys()]) if (!seen.has(id)) ex.actors.delete(id);
+        if (m.leader && ex.actors.has(String(m.leader))) ex.leader = m.leader as CharId;
         (m.roam as [number, 1 | -1][]).forEach(([x, d], i) => {
           const r = ex.roamers[i];
           if (r) {
@@ -260,6 +279,7 @@ export class GuestMirror {
     const items = m.items as Record<string, number>;
     if (!ENCOUNTERS[String(m.enc)]) return;
     this.coop.resetBattle();
+    g.dialogue.close();
     audio.sfx('tear_rip', { vol: 0.5 });
     await g.fade('out', 220, '#fff6e0');
     g.battleScr = new Battle(g, st, items, this.coop.battleLink());

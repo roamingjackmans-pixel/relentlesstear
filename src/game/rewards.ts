@@ -54,11 +54,19 @@ export function applyRewards(st: BState, save: SaveData, profile: Profile, me: s
     const c = save.chars[u.id as CharId];
     if (c) c.hpFrac = u.ko ? 0.15 : Math.max(0.05, u.hp / u.maxHp);
   }
+  // Tasks that belong to the whole fight count for every player at the table (guests read st.tally)
+  const ctrls = new Set(st.units.filter((u) => u.side === 'party').map((u) => (u.ctrl === 'ai' ? 'host' : u.ctrl)));
+  const add = (k: string, n: number, max = false): void => {
+    for (const c of ctrls) {
+      const t = (st.tally[c] ??= {});
+      t[k] = max ? Math.max(t[k] ?? 0, n) : (t[k] ?? 0) + n;
+    }
+  };
+  if (won && st.units.some((u) => u.side === 'party' && !u.ko && u.hp < u.maxHp * 0.25)) add('ragged', 1);
+  if (won && enc.id === 'b_first_thread') add('first_thread', 1, true);
   // tasks for this player
   const tally = st.tally[me] ?? {};
-  for (const [k, n] of Object.entries(tally)) profile.tasks[k] = (profile.tasks[k] ?? 0) + n;
-  if (won && st.units.some((u) => u.side === 'party' && !u.ko && u.hp < u.maxHp * 0.25)) profile.tasks.ragged = (profile.tasks.ragged ?? 0) + 1;
-  if (won && enc.id === 'b_first_thread') profile.tasks.first_thread = 1;
+  for (const [k, n] of Object.entries(tally)) profile.tasks[k] = k === 'first_thread' ? Math.max(profile.tasks[k] ?? 0, n) : (profile.tasks[k] ?? 0) + n;
   for (const c of CLASSES) {
     if (!profile.classes.includes(c.id) && (profile.tasks[c.task] ?? 0) >= c.need) {
       profile.classes.push(c.id);

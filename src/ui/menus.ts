@@ -22,6 +22,18 @@ function portraitEl(id: CharId, save: SaveData, w = 120, hgt = 130, expr: 'neutr
   return c;
 }
 
+/** what the focused control says (minus check marks), so a rebuilt list can focus the same control again */
+function focusKey(): string {
+  const el = document.activeElement as HTMLElement | null;
+  return (el?.textContent ?? '').replace(/^[●☑☐]\s*/, '').trim();
+}
+function refocus(scope: HTMLElement, key: string): boolean {
+  if (!key) return false;
+  const hit = [...scope.querySelectorAll<HTMLElement>('[data-nav]')].find((b) => (b.textContent ?? '').replace(/^[●☑☐]\s*/, '').trim() === key);
+  hit?.focus({ preventScroll: true });
+  return !!hit;
+}
+
 const ATTR_INFO: [keyof Attrs, string, string][] = [
   ['vit', 'Vitality', '+12 max HP'],
   ['might', 'Might', '+2 attack'],
@@ -67,7 +79,10 @@ export function openPauseMenu(g: Game, startTab: 'party' | 'items' | 'journal' |
       h('div', { class: 'row', style: 'align-items:baseline;gap:18px' }, h('h2', {}, s ? s.chapterName : 'Menu'), s ? h('span', { class: 'muted' }, `${g.explore?.spec.name ?? ''} · ${s.glim} Glim · ${fmtTime(s.playtime)}`) : null),
       tabs,
       body,
-      h('div', { class: 'row', style: 'margin-top:10px;justify-content:flex-end' }, guest ? btn('Leave game', () => void g.confirmQuit()) : [btn('Save', () => void g.persist().then(() => toast('Saved.')), 'btn small'), btn('Title screen', () => {
+      h('div', { class: 'row', style: 'margin-top:10px;justify-content:flex-end' }, guest ? btn('Leave game', () => {
+        close();
+        void g.confirmQuit();
+      }) : [btn('Save', () => void g.persist().then(() => toast('Saved.')), 'btn small'), btn('Title screen', () => {
         close();
         void g.confirmQuit();
       }, 'btn small')]),
@@ -136,8 +151,10 @@ function partyView(g: Game): HTMLElement {
       } } }, label));
     page.innerHTML = '';
     const redraw = (): void => {
+      const key = focusKey();
       drawLeft();
       drawPage();
+      refocus(wrap, key);
     };
     if (pageName === 'stats') page.append(statsPage(g, sel, redraw));
     if (pageName === 'skills') page.append(skillsPage(g, sel, redraw));
@@ -335,7 +352,10 @@ function gearPage(g: Game, id: CharId, redraw: () => void): HTMLElement {
     patchBox.append(
       h('button', { class: `item-row ${on ? 'on' : ''}`, 'data-nav': '1', disabled: !on && (!free || c.patches.length >= 3), on: { focus: () => (desc.textContent = `${p.desc} ${s.learnedPatches.includes(p.id) ? 'Learned as an Embroidery.' : `${Math.min(4, wins)}/4 battles to learn it.`}`), click: () => {
         if (on) c.patches = c.patches.filter((x) => x !== p.id);
-        else if (c.patches.length < 3) c.patches.push(p.id);
+        else if (c.patches.length < 3) {
+          c.patches.push(p.id);
+          c.embroideries = c.embroideries.filter((x) => x !== p.id);
+        }
         audio.sfx('stitch');
         redraw();
       } } }, h('span', { class: 'n' }, `${on ? '● ' : ''}${p.name}`), h('span', { class: 'r' }, s.learnedPatches.includes(p.id) ? 'learned' : `${Math.min(4, wins)}/4`)),
@@ -349,7 +369,8 @@ function gearPage(g: Game, id: CharId, redraw: () => void): HTMLElement {
     const p = PATCH_MAP[pid];
     if (!p) continue;
     const on = c.embroideries.includes(pid);
-    const canAdd = tpUsed(c) + p.tp <= tpT;
+    // the same power can't be worn twice (as a Patch and as its Embroidery)
+    const canAdd = tpUsed(c) + p.tp <= tpT && !c.patches.includes(pid);
     embBox.append(
       h('button', { class: `item-row ${on ? 'on' : ''}`, 'data-nav': '1', disabled: !on && !canAdd, on: { focus: () => (desc.textContent = p.desc), click: () => {
         if (on) c.embroideries = c.embroideries.filter((x) => x !== pid);
@@ -403,7 +424,12 @@ function classPage(g: Game, id: CharId, redraw: () => void): HTMLElement {
               if (!unlocked) return;
               if (wearing) c.cls = null;
               else {
-                if (wornBy) s.chars[wornBy].cls = null;
+                if (wornBy) {
+                  // the class leaves its old wearer, skills included
+                  s.chars[wornBy].cls = null;
+                  const theirs = availableSkills(s, wornBy);
+                  s.chars[wornBy].equipped = s.chars[wornBy].equipped.filter((x) => theirs.includes(x));
+                }
                 c.cls = cl.id;
               }
               // drop class skills that no longer apply
@@ -479,39 +505,50 @@ function journalView(g: Game): HTMLElement {
 function settingsView(g: Game): HTMLElement {
   const st = g.settings;
   const slider = (label: string, key: 'master' | 'music' | 'sfx'): HTMLElement =>
-    h('label', { class: 'field' }, `${label}`, h('input', { type: 'range', min: '0', max: '1', step: '0.05', value: String(st[key]), 'data-nav': '1', on: { input: (e: Event) => {
+    h('label', { class: 'field' }, label, h('input', { type: 'range', min: '0', max: '1', step: '0.05', value: String(st[key]), 'data-nav': '1', on: { input: (e: Event) => {
       st[key] = Number((e.target as HTMLInputElement).value);
       g.applySettings();
     } } }));
-  const toggle = (label: string, key: 'timingAid' | 'shake' | 'autoAdvance' | 'reducedFlash', hint: string): HTMLElement =>
-    btn(`${st[key] ? '☑' : '☐'} ${label}`, () => {
+  // each button rewrites its own label (Safari doesn't focus clicked buttons, so activeElement can't be trusted)
+  const toggle = (label: string, key: 'timingAid' | 'shake' | 'autoAdvance' | 'reducedFlash'): HTMLElement => {
+    const b: HTMLButtonElement = btn(`${st[key] ? '☑' : '☐'} ${label}`, () => {
       st[key] = !st[key];
       g.applySettings();
-      const el = document.activeElement as HTMLElement;
-      if (el) el.firstChild!.textContent = `${st[key] ? '☑' : '☐'} ${label}`;
-    }, 'btn small', { title: hint });
-  const diff = g.save
-    ? h('div', { class: 'col' }, h('h3', {}, 'Difficulty'), ...(['story', 'mender', 'unthreaded'] as const).map((d) => btn(`${g.save.difficulty === d ? '● ' : ''}${{ story: 'Story: wide timing windows, gentler enemies', mender: 'Mender: the intended challenge', unthreaded: 'Unthreaded: tight windows, hard hits' }[d]}`, () => {
+      b.textContent = `${st[key] ? '☑' : '☐'} ${label}`;
+    }, 'btn small');
+    return b;
+  };
+  const gfx: HTMLButtonElement = btn(`Graphics: ${st.quality === 'high' ? 'Beautiful' : 'Fast'}`, () => {
+    st.quality = st.quality === 'high' ? 'low' : 'high';
+    g.applySettings();
+    gfx.textContent = `Graphics: ${st.quality === 'high' ? 'Beautiful' : 'Fast'}`;
+  }, 'btn small');
+  const DIFFS = { story: 'Story: wide timing windows, gentler enemies', mender: 'Mender: the intended challenge', unthreaded: 'Unthreaded: tight windows, hard hits' } as const;
+  const diffBtns: [keyof typeof DIFFS, HTMLButtonElement][] = [];
+  const paintDiff = (): void => {
+    for (const [d, b] of diffBtns) b.textContent = `${g.save?.difficulty === d ? '● ' : ''}${DIFFS[d]}`;
+  };
+  for (const d of Object.keys(DIFFS) as (keyof typeof DIFFS)[])
+    diffBtns.push([
+      d,
+      btn('', () => {
         g.save.difficulty = d;
         toast(`Difficulty: ${d}`);
-        const parent = (document.activeElement as HTMLElement)?.parentElement;
-        if (parent) parent.querySelectorAll('button').forEach((b, i) => (b.firstChild!.textContent = `${['story', 'mender', 'unthreaded'][i] === d ? '● ' : ''}${b.textContent!.replace('● ', '')}`));
-      }, 'btn small')))
-    : null;
+        paintDiff();
+      }, 'btn small'),
+    ]);
+  paintDiff();
+  const guest = !!(g.net && !g.net.isHost);
+  const diff = g.save && !guest ? h('div', { class: 'col' }, h('h3', {}, 'Difficulty'), ...diffBtns.map(([, b]) => b)) : null;
   return h(
     'div',
     { class: 'grid3', style: 'width:100%' },
     h('div', { class: 'col' }, h('h3', {}, 'Sound'), slider('Master volume', 'master'), slider('Music', 'music'), slider('Effects', 'sfx'), h('h3', {}, 'Text'), h('label', { class: 'field' }, 'Text speed', h('input', { type: 'range', min: '0', max: '120', step: '5', value: String(st.textSpeed), 'data-nav': '1', on: { input: (e: Event) => {
       st.textSpeed = Number((e.target as HTMLInputElement).value);
       g.applySettings();
-    } } })), toggle('Auto-advance dialogue', 'autoAdvance', '')),
-    h('div', { class: 'col' }, h('h3', {}, 'Play'), toggle('Timing aid rings on attacks', 'timingAid', ''), toggle('Screen shake', 'shake', ''), toggle('Reduce flashing', 'reducedFlash', ''), btn(`Graphics: ${st.quality === 'high' ? 'Beautiful' : 'Fast'}`, () => {
-      st.quality = st.quality === 'high' ? 'low' : 'high';
-      g.applySettings();
-      const el = document.activeElement as HTMLElement;
-      if (el) el.textContent = `Graphics: ${st.quality === 'high' ? 'Beautiful' : 'Fast'}`;
-    }, 'btn small'), diff),
-    h('div', { class: 'col' }, h('h3', {}, 'Controls'), h('div', { class: 'desc', style: 'font-size:14px;line-height:1.7', html: '<kbd>A</kbd><kbd>D</kbd> move · <kbd>Shift</kbd> run · <kbd>E</kbd> interact · <kbd>Z</kbd> strike first<br><kbd>Esc</kbd> menu (hold in a scene to fast-forward) · <kbd>M</kbd> map<br>In battle: <kbd>Space</kbd> timed strikes &amp; parry · <kbd>Shift</kbd> dodge · <kbd>W</kbd> jump · arrows choose<br>Free Aim: mouse or arrows, <kbd>Space</kbd> fire<br>Gamepad: A confirm/parry · B dodge · Y jump · X strike/aim · Start menu' }), g.user ? h('p', { class: 'muted' }, `Signed in as ${g.user.name}. Saves go to the cloud.`) : h('p', { class: 'muted' }, 'Playing on this device only.')),
+    } } })), toggle('Auto-advance dialogue', 'autoAdvance')),
+    h('div', { class: 'col' }, h('h3', {}, 'Play'), toggle('Timing aid rings on attacks', 'timingAid'), toggle('Screen shake', 'shake'), toggle('Reduce flashing', 'reducedFlash'), gfx, diff),
+    h('div', { class: 'col' }, h('h3', {}, 'Controls'), h('div', { class: 'desc', style: 'font-size:14px;line-height:1.7', html: '<kbd>A</kbd><kbd>D</kbd> move · <kbd>Shift</kbd> run · <kbd>E</kbd> interact · <kbd>Z</kbd> strike first<br><kbd>Esc</kbd> menu (hold in a scene to fast-forward) · <kbd>M</kbd> map<br>In battle: <kbd>Space</kbd> timed strikes &amp; parry · <kbd>Shift</kbd> dodge · <kbd>W</kbd> jump · arrows choose<br>Free Aim: mouse or arrows, <kbd>Space</kbd> fire<br>Gamepad: A confirm/parry · B dodge · Y jump · X strike/aim · Start menu<br>Touch: on-screen pad to walk, buttons to act' }), g.user ? h('p', { class: 'muted' }, `Signed in as ${g.user.name}. Saves go to the cloud.`) : h('p', { class: 'muted' }, 'Playing on this device only.')),
   );
 }
 
@@ -550,8 +587,9 @@ export function openShopMenu(g: Game, id: string): Promise<void> {
             audio.sfx('chest');
             toast(`Bought ${d.name}.`);
             void g.persist();
+            const key = focusKey();
             draw();
-            focusFirst(list);
+            if (!refocus(list, key)) focusFirst(list);
           } } }, h('span', { class: 'n' }, d.name), h('span', { class: 'r' }, owned ? 'owned' : `${it.price} Glim${!unique && count(s, it.item) ? ` · have ${count(s, it.item)}` : ''}`)),
         );
       }

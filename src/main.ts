@@ -6,6 +6,7 @@ import { registerPatterns } from './game/rewards';
 import { ctx2d, fit, H, W, type View } from './render/canvas';
 import { showTitle } from './ui/title';
 import { REGION_LIST } from './world';
+import { CUTSCENES } from './story';
 
 const canvas = document.getElementById('view') as HTMLCanvasElement;
 const stage = document.getElementById('stage')!;
@@ -25,6 +26,7 @@ const game = new Game(view);
 (window as unknown as { rt: Game; rtInput: typeof input }).rt = game;
 (window as unknown as { rtInput: typeof input }).rtInput = input;
 (window as unknown as { rtRegions: typeof REGION_LIST }).rtRegions = REGION_LIST;
+(window as unknown as { rtCutscenes: typeof CUTSCENES }).rtCutscenes = CUTSCENES;
 game.start();
 
 // wait (briefly) for the storybook fonts so the first canvas text uses them

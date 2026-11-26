@@ -95,7 +95,10 @@ export class Dialogue {
     this.shown = 0;
     this.typing = this.speed > 0;
     this.lastT = performance.now();
-    if (!this.typing) textEl.textContent = this.full;
+    if (!this.typing) {
+      textEl.textContent = this.full;
+      this.autoAt = performance.now() + 900 + this.full.length * 35;
+    }
     return new Promise((res) => {
       this.resolveFn = res;
     });

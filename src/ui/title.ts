@@ -15,6 +15,9 @@ import { VERSION } from '../version';
 import { btn, clearUi, confirmBox, fmtTime, h, notice, pushLayer, toast, uiRoot } from './dom';
 
 let triedResume = false;
+/** the story a host picked: written to the slot only when the game starts */
+let hostPick: { slot: number; save: SaveData; isNew: boolean } | null = null;
+const currentPick = (): typeof hostPick => hostPick;
 
 function titleBackdrop(g: Game): void {
   const back = new Backdrop('cliffs_wind', { weather: 'threads' });
@@ -98,7 +101,10 @@ export function signInPanel(g: Game, first: boolean): Promise<void> {
       pop();
       res();
     };
+    let sending = false;
     const submit = async (): Promise<void> => {
+      if (sending) return;
+      sending = true;
       err.textContent = '';
       try {
         if (mode === 'in') {
@@ -126,6 +132,8 @@ export function signInPanel(g: Game, first: boolean): Promise<void> {
       } catch (e) {
         err.className = 'err';
         err.textContent = e instanceof ApiError ? e.message : 'Something went wrong.';
+      } finally {
+        sending = false;
       }
     };
     const field = (label: string, el: HTMLElement): HTMLElement => h('label', { class: 'field' }, label, el);
@@ -138,18 +146,18 @@ export function signInPanel(g: Game, first: boolean): Promise<void> {
       if (mode === 'reset') body.append(field('Email', email), field('Code from the email', code), field('New password', pass));
       body.append(err);
       const extra = [
-        h('div', { class: 'row', style: 'justify-content:space-between;margin-top:6px' }, btn({ in: 'Sign in', up: 'Create account', forgot: 'Send code', reset: 'Set password' }[mode], () => void submit(), 'btn gold'), mode === 'in' ? h('button', { class: 'link', on: { click: () => {
+        h('div', { class: 'row', style: 'justify-content:space-between;margin-top:6px' }, btn({ in: 'Sign in', up: 'Create account', forgot: 'Send code', reset: 'Set password' }[mode], () => void submit(), 'btn gold'), mode === 'in' ? h('button', { class: 'link', 'data-nav': '1', on: { click: () => {
           mode = 'forgot';
           draw();
-        } } }, 'Forgot password?') : h('button', { class: 'link', on: { click: () => {
+        } } }, 'Forgot password?') : h('button', { class: 'link', 'data-nav': '1', on: { click: () => {
           mode = 'in';
           draw();
         } } }, 'Back to sign in')),
-        mode === 'in' ? h('p', { class: 'center', style: 'margin-top:10px' }, 'New here? ', h('button', { class: 'link', on: { click: () => {
+        mode === 'in' ? h('p', { class: 'center', style: 'margin-top:10px' }, 'New here? ', h('button', { class: 'link', 'data-nav': '1', on: { click: () => {
           mode = 'up';
           draw();
         } } }, 'Create an account'), h('br'), h('span', { class: 'muted', style: 'font-size:14px' }, 'One account for Relentless Tear, Shoallhell, Smash Your Bros and Baker\'s Dozen.')) : null,
-        first ? h('p', { class: 'center' }, h('button', { class: 'link', on: { click: () => {
+        first ? h('p', { class: 'center' }, h('button', { class: 'link', 'data-nav': '1', on: { click: () => {
           try {
             localStorage.setItem('rt.offline', '1');
           } catch {
@@ -217,7 +225,10 @@ function slotsPanel(g: Game, purpose: 'solo' | 'host'): Promise<number | null> {
                   if (s.flags.game_done) opts.push('New Game+');
                   const which = await choosePanel(`Slot ${i + 1}`, opts);
                   if (which === 0) {
-                    if (purpose === 'host') return close(i);
+                    if (purpose === 'host') {
+                      hostPick = { slot: i, save: s, isNew: !s.flags['seen:pro_opening'] };
+                      return close(i);
+                    }
                     close(i);
                     clearUi();
                     void g.play(i, s, false);
@@ -226,7 +237,7 @@ function slotsPanel(g: Game, purpose: 'solo' | 'host'): Promise<number | null> {
                     const d = await difficultyPanel();
                     if (!d) return;
                     if (purpose === 'host') {
-                      g.profile.slots[i] = newSave(d);
+                      hostPick = { slot: i, save: newSave(d), isNew: true };
                       return close(i);
                     }
                     close(i);
@@ -235,7 +246,7 @@ function slotsPanel(g: Game, purpose: 'solo' | 'host'): Promise<number | null> {
                   } else if (which === 2) {
                     const ng = newGamePlus(s);
                     if (purpose === 'host') {
-                      g.profile.slots[i] = ng;
+                      hostPick = { slot: i, save: ng, isNew: true };
                       return close(i);
                     }
                     close(i);
@@ -246,7 +257,7 @@ function slotsPanel(g: Game, purpose: 'solo' | 'host'): Promise<number | null> {
                   const d = await difficultyPanel();
                   if (!d) return;
                   if (purpose === 'host') {
-                    g.profile.slots[i] = newSave(d);
+                    hostPick = { slot: i, save: newSave(d), isNew: true };
                     return close(i);
                   }
                   close(i);
@@ -338,9 +349,11 @@ async function coopPanel(g: Game): Promise<void> {
 }
 
 async function hostLobby(g: Game): Promise<void> {
+  hostPick = null;
   const slot = await slotsPanel(g, 'host');
-  if (slot == null) return;
-  const save = g.profile.slots[slot]!;
+  const pick = currentPick();
+  if (slot == null || !pick || pick.slot !== slot) return;
+  const { save, isNew } = pick;
   let net: Net;
   try {
     net = await Net.shared();
@@ -412,7 +425,7 @@ async function hostLobby(g: Game): Promise<void> {
       off2();
       off3();
       clearUi();
-      void g.play(slot, save, !save.flags['seen:pro_opening']);
+      void g.play(slot, save, isNew);
     }, 'btn gold', { 'data-autofocus': '1' })),
   );
   pop = pushLayer(el, undefined);

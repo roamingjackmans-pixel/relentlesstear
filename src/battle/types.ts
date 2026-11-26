@@ -9,6 +9,8 @@ export interface Status {
   id: StatusId;
   turns: number;
   stacks: number;
+  /** applied to a unit during its own turn: skip one tick so it lasts its full length */
+  fresh?: boolean;
 }
 
 export interface WP {

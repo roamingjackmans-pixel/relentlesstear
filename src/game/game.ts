@@ -14,7 +14,7 @@ import { Explore } from '../explore/explore';
 import { WorldMap } from '../explore/worldmap';
 import { api, getToken, setToken, type User } from '../net/api';
 import type { Coop } from '../net/coop';
-import { fit, H, setLowQuality, W, type View } from '../render/canvas';
+import { fit, H, resolutionCap, setLowQuality, setResolutionCap, W, type View } from '../render/canvas';
 import { Fx } from '../render/fx';
 import { clearPropCache } from '../render/props';
 import { BOND_SCENES, CUTSCENES, JOURNALS } from '../story';
@@ -23,9 +23,10 @@ import { Dialogue } from '../ui/dialogue';
 import { btn, confirmBox, h, layerCount, navigate, notice, pushLayer, toast, tutorial } from '../ui/dom';
 import { openPartyMenu, openPauseMenu, openShopMenu, showRewards } from '../ui/menus';
 import { showTitle } from '../ui/title';
+import { updateTouchPad } from '../ui/touch';
 import { OPENING_CUTSCENE, SCENES } from '../world';
 import { applyRewards } from './rewards';
-import { addItem, DEFAULT_SETTINGS, flagOn, newProfile, restoreParty, type Profile, type SaveData, type Settings } from './state';
+import { addItem, DEFAULT_SETTINGS, flagOn, mergeProfiles, newProfile, restoreParty, type Profile, type SaveData, type Settings } from './state';
 import { GuestMirror, HostSync } from './sync';
 
 export type Mode = 'title' | 'explore' | 'battle' | 'worldmap' | 'credits' | 'void';
@@ -115,7 +116,17 @@ export class Game {
       this.rev = r.rev;
       if (r.profile && (r.profile as Profile).v === 1) {
         const p = r.profile as Profile;
-        this.profile = { ...newProfile(), ...p, settings: { ...DEFAULT_SETTINGS, ...p.settings } };
+        const cloud = { ...newProfile(), ...p, settings: { ...DEFAULT_SETTINGS, ...p.settings } };
+        let owner = 'offline';
+        try {
+          owner = localStorage.getItem('rt.profile.owner') ?? 'offline';
+        } catch {
+          /* private window */
+        }
+        // this device's copy: same account -> newer slot wins; offline play -> fills empty slots; another account -> ignored
+        const local = this.profile;
+        this.profile = owner === r.user.id || owner === 'offline' ? mergeProfiles(cloud, local, owner === 'offline') : cloud;
+        if (JSON.stringify(this.profile.slots) !== JSON.stringify(cloud.slots)) void this.pushProfile();
       } else {
         // first time on this account: bring this device's local progress along
         this.profile.slots = this.profile.slots.map((s) => s ?? null);
@@ -146,6 +157,7 @@ export class Game {
     setToken('');
     this.user = null;
     this.profile = newProfile();
+    (this as { save?: SaveData }).save = undefined;
     this.loadLocal();
   }
 
@@ -163,6 +175,7 @@ export class Game {
     }
     try {
       localStorage.setItem(LOCAL_KEY, JSON.stringify(this.profile));
+      localStorage.setItem('rt.profile.owner', this.user?.id ?? 'offline');
       localStorage.setItem('rt.tutSeen', JSON.stringify([...this.tutSeen]));
     } catch {
       /* storage full or blocked */
@@ -187,8 +200,10 @@ export class Game {
     } catch (e) {
       const err = e as { status?: number; body?: { rev?: number } };
       if (err.status === 409 && typeof err.body?.rev === 'number') {
-        // another device saved: keep ours (it's the newer play), take their revision number
+        // another device saved: merge (newest slot wins, Tasks and classes add up), then save on top
         this.rev = err.body.rev;
+        const theirs = (err.body as { profile?: Profile }).profile;
+        if (theirs && theirs.v === 1) this.profile = mergeProfiles({ ...newProfile(), ...theirs, settings: this.profile.settings }, this.profile, false);
         try {
           const r = await api.save(this.profile, this.rev);
           this.rev = r.rev;
@@ -207,7 +222,13 @@ export class Game {
       const dt = Math.min(0.05, (now - this.lastT) / 1000);
       this.lastT = now;
       last = performance.now();
-      this.tick(dt);
+      try {
+        this.tick(dt);
+      } catch (e) {
+        // one bad frame must never stop the game loop
+        console.error('[rt] frame error', e);
+        input.endFrame();
+      }
     };
     const frame = (now: number): void => {
       step(now);
@@ -240,7 +261,9 @@ export class Game {
         }
       } else this.holdSkip = 0;
     }
-    const controls = this.mode === 'explore' && this.busy === 0 && !uiTook && !this.dialogue.open && !this.fadeAnim && !(this.net && !this.net.isHost);
+    const free = this.mode === 'explore' && this.busy === 0 && !uiTook && !this.dialogue.open && !this.fadeAnim;
+    const controls = free && !(this.net && !this.net.isHost);
+    updateTouchPad(free);
     switch (this.mode) {
       case 'title':
       case 'void':
@@ -250,7 +273,8 @@ export class Game {
         break;
       case 'explore':
         if (this.explore) {
-          if (controls && input.pressed('menu')) {
+          // guests can't move the party, but they can open their menu (settings, leave)
+          if (free && input.pressed('menu')) {
             input.eat('menu');
             input.eat('back');
             void this.pauseMenu();
@@ -302,7 +326,12 @@ export class Game {
     this.fps.t += dt;
     if (this.fps.t > 4) {
       const f = this.fps.frames / this.fps.t;
-      if (f < 38 && this.settings.quality === 'high' && this.mode !== 'title') {
+      // slow frames: first render fewer pixels (dynamic resolution), and only then turn effects down
+      const scale = this.view.scale;
+      if (f < 48 && scale > 1.05 && this.mode !== 'title') {
+        setResolutionCap(Math.max(1, scale - 0.25));
+        fit(this.view, this.view.canvas.parentElement!);
+      } else if (f < 38 && this.settings.quality === 'high' && this.mode !== 'title') {
         this.fps.slow++;
         if (this.fps.slow >= 2) {
           this.settings.quality = 'low';
@@ -310,7 +339,14 @@ export class Game {
           clearPropCache();
           toast('Switched to faster graphics (Settings to change).');
         }
-      } else this.fps.slow = 0;
+      } else {
+        this.fps.slow = 0;
+        // plenty of headroom: creep back up toward full sharpness
+        if (f > 57 && resolutionCap() < 2.2 && Math.abs(scale - resolutionCap()) < 0.02) {
+          setResolutionCap(resolutionCap() + 0.1);
+          fit(this.view, this.view.canvas.parentElement!);
+        }
+      }
       this.fps.frames = 0;
       this.fps.t = 0;
     }
@@ -384,6 +420,13 @@ export class Game {
 
   /** Begin a loaded save (Continue / Load / New Game). */
   async play(slot: number, save: SaveData, isNew: boolean): Promise<void> {
+    // a fresh start: nothing from an earlier session (an abandoned menu, a cutscene) may still hold the game
+    this.busy = 0;
+    this.cutDepth = 0;
+    this.ff = false;
+    this.abortCutscene = false;
+    this.pendingEnter = null;
+    this.pendingMap = null;
     this.slot = slot;
     this.save = save;
     this.profile.lastSlot = slot;
@@ -402,7 +445,11 @@ export class Game {
       if (cs) await this.runCutscene(cs.id);
       if (!this.explore || this.explore.spec.id !== 'hm_green') await this.gotoScene('hm_green', 300);
       for (const a of this.explore!.actors.values()) if (a.party) a.hidden = false;
-      void this.tutorialOnce('move');
+      // the walking tutorial waits until the village's opening scene has played
+      void (async () => {
+        while (this.cutDepth > 0 || this.busy > 0) await new Promise((r) => setTimeout(r, 300));
+        await this.tutorialOnce('move');
+      })();
       return;
     }
     await this.gotoScene(save.scene, save.x);
@@ -417,6 +464,7 @@ export class Game {
       return;
     }
     if (this.mode === 'explore' || this.mode === 'worldmap') await this.fade('out', 380);
+    this.pendingEnter = null;
     this.closeWorldMap();
     this.explore = new Explore(this, spec, x ?? 200);
     this.mode = 'explore';
@@ -517,6 +565,7 @@ export class Game {
         this.ff = false;
         this.dialogue.close();
         this.explore?.releaseActors();
+        this.net?.cast({ t: 'cutEnd' });
         void this.flushPending();
       }
     }
@@ -912,7 +961,10 @@ export class Game {
         if (done) {
           el.remove();
           this.mode = prev === 'credits' ? 'explore' : prev;
-          res();
+          // the world comes back (post-game: the First Thread, New Game+ from the title)
+          void this.fade('in', 1500);
+          if (this.explore) audio.music(this.explore.spec.music, 2000);
+          void notice('The story is complete', h('p', {}, 'Thank you for playing. The world is yours to wander: something waits beneath the Underweave, and New Game+ is on the title screen (Saves).'), 'Continue', true).then(() => res());
         } else setTimeout(step, 16);
       };
       step();
@@ -921,6 +973,12 @@ export class Game {
 
   async toTitle(): Promise<void> {
     await this.persist();
+    // forget the save we were in (a guest's copy of the host's save must never be written to their own slot)
+    (this as { save?: SaveData }).save = undefined;
+    this.busy = 0;
+    this.cutDepth = 0;
+    this.dialogue.close();
+    this.dialogue.locked = false;
     this.closeWorldMap();
     this.explore = null;
     this.battleScr = null;

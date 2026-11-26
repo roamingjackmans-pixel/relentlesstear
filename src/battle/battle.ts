@@ -98,6 +98,7 @@ interface Qte {
   onBeat: (i: number, q: Quality) => void;
   done: (qs: Quality[]) => void;
   auto?: Quality[];
+  fin?: boolean;
 }
 
 interface DefHit {
@@ -129,6 +130,11 @@ export interface BattleLink {
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+/** Actions after which the same unit keeps its turn: Free Aim shots and Deadeye. */
+function keepsTurn(a: PAction): boolean {
+  return a.k === 'shot' || (a.k === 'skill' && !!skill(a.id)?.effects?.some((e) => e.k === 'free_shots'));
+}
 
 /** A small round portrait of an enemy for the turn order, drawn once per art. */
 const iconCache = new Map<string, HTMLCanvasElement>();
@@ -194,6 +200,11 @@ export class Battle {
     foes.forEach((u, i) => {
       let s = slots[i] ?? { x: 900 + i * 60, y: 600 };
       if (foes.length === 1 && u.size > 1.6) s = { x: 980, y: 625 };
+      if (!this.view.has(u.uid) && this.view.size > 0) {
+        // a summon: the first spot no living enemy stands on
+        const living = foes.filter((f) => !f.ko && this.view.has(f.uid)).map((f) => this.v(f.uid));
+        s = ENEMY_SLOTS[5].find((c) => living.every((v) => Math.hypot(v.hx - c.x, v.hy - c.y) > 70)) ?? { x: 860 + Math.random() * 280, y: 560 + Math.random() * 80 };
+      }
       if (!this.view.has(u.uid)) {
         const v = this.newView(u, s.x, s.y);
         v.alpha = 0;
@@ -329,10 +340,11 @@ export class Battle {
     this.anim(u.uid, 'ready', 0);
     if (this.isLocal(u)) {
       for (;;) {
+        if (this.st.phase !== 'turn') return;
         const act = await this.chooseAction(u);
-        if (!act) continue;
-        if (act.k === 'shot') continue; // shots are resolved inside the aim loop
+        if (!act || act.k === 'shot') continue; // shots are resolved inside the aim loop
         await this.perform(u, act, null);
+        if (keepsTurn(act) && this.st.phase === 'turn') continue;
         return;
       }
     }
@@ -348,11 +360,33 @@ export class Battle {
     // someone else's character (or the host's AI, seen by a guest)
     this.hint = `${u.name} is deciding…`;
     for (;;) {
-      const { act, quals } = await this.link!.waitAct(this.st.turn, u.uid);
+      const got = await Promise.race([this.link!.waitAct(this.st.turn, u.uid), this.untilAi(u.uid)]);
       this.hint = '';
-      await this.perform(u, act, quals);
-      if (act.k !== 'shot') return;
+      if (got === 'ai') {
+        // the player left: the host plays this seat from now on (and tells everyone what it did)
+        if (!this.link?.isHost || this.st.phase !== 'turn') return;
+        const act = E.aiAction(this.st, u.uid, this.items);
+        const sk = act.k === 'skill' ? skill(act.id) : null;
+        const quals = sk ? E.aiQuals(this.st, u.uid, sk) : [];
+        this.link.sendAct(this.st.turn, u.uid, act, quals);
+        await this.perform(u, act, quals);
+        return;
+      }
+      await this.perform(u, got.act, got.quals);
+      if (!keepsTurn(got.act) || this.st.phase !== 'turn') return;
     }
+  }
+
+  /** Resolves once a unit's seat has been handed to the AI (its player left), or the fight is over. */
+  private untilAi(uid: string): Promise<'ai'> {
+    return new Promise((res) => {
+      const iv = setInterval(() => {
+        if (E.unit(this.st, uid)?.ctrl === 'ai' || this.st.phase !== 'turn') {
+          clearInterval(iv);
+          res('ai');
+        }
+      }, 250);
+    });
   }
 
   /** Command menu -> a full action (or a shot, already applied). */
@@ -610,7 +644,7 @@ export class Battle {
       u.ap -= cost;
       u.shotsThisTurn++;
       this.tracer(a.uid, a.x, a.y, false);
-      this.link?.sendAct(this.st.turn, u.uid, { k: 'pass' }, []);
+      this.link?.sendAct(this.st.turn, u.uid, act, []);
       return;
     }
     this.link?.sendAct(this.st.turn, u.uid, act, []);
@@ -845,7 +879,10 @@ export class Battle {
         }
       });
       if (q.kind === 'hold' && q.holdStart && !q.holdRel && now >= q.beats[0].t) q.holdRel = now;
-      if (finished()) q.done(q.beats.map((b) => b.q!));
+      if (finished() && !q.fin) {
+        q.fin = true;
+        q.done(q.beats.map((b) => b.q!));
+      }
       return;
     }
     if (q.kind === 'hold') {
@@ -865,7 +902,7 @@ export class Battle {
           q.onBeat(0, b.q);
           q.done([b.q]);
         }
-      } else if (!q.holdStart && now > b.t + 1800) {
+      } else if (!q.holdStart && !q.holdRel && now > b.t + 1800) {
         b.q = 'miss';
         q.holdRel = now;
         q.onBeat(0, 'miss');
@@ -888,10 +925,17 @@ export class Battle {
     if (pressT > 0) {
       input.eat('confirm');
       input.eat('parry');
-      const next = q.beats.find((b) => !b.q);
+      const open = q.beats.filter((b) => !b.q);
+      let next = open[0];
+      for (const b of open) if (Math.abs(pressT - b.t) < Math.abs(pressT - next.t)) next = b;
       if (next) {
         const d = Math.abs(pressT - next.t);
         if (d <= w.good || pressT > next.t - 320) {
+          for (const b of open) {
+            if (b === next || b.t > next.t) continue;
+            b.q = 'miss';
+            q.onBeat(q.beats.indexOf(b), 'miss');
+          }
           let qq: Quality = d <= w.perfect ? 'perfect' : d <= w.good ? 'good' : 'miss';
           if (q.kind === 'rhythm' && pressDir >= 0 && pressDir !== next.dir) qq = 'miss';
           if (q.kind === 'rhythm' && pressDir < 0 && qq === 'perfect') qq = 'good';
@@ -908,7 +952,10 @@ export class Battle {
         this.judgeText('miss', q.ax, q.ay);
       }
     });
-    if (finished()) q.done(q.beats.map((b) => b.q!));
+    if (finished() && !q.fin) {
+      q.fin = true;
+      q.done(q.beats.map((b) => b.q!));
+    }
   }
 
   private mouseDown(): boolean {
@@ -970,19 +1017,21 @@ export class Battle {
     for (const hh of hits) {
       perHit.push(
         (async () => {
-          const late = this.defWindow('late');
+          const late = Math.max(this.defWindow('late', 'dodge') * (this.localPassive('light_feet') ? 1.35 : 1), this.defWindow('late', 'parry') * (this.localPassive('steady_hand') ? 1.3 : 1), this.defWindow('late', 'jump') * (this.localPassive('light_feet') ? 1.35 : 1));
           await sleep(Math.max(0, hh.t + late - performance.now()));
           if (this.st.phase !== 'turn') return;
           // the local defenders' result for this hit
           const d = local.length ? this.resolveLocal(hh) : 'none';
           for (const l of local) defs[l][hh.i] = d;
           this.anim(u.uid, 'attack', 260);
+          if (this.link) {
+            // co-op: show your own parry/dodge now; damage is applied below, in one fixed order for everyone
+            for (const l of local) if (d !== 'none') this.defenseFx(l, d, hh.kind, atk.hits[hh.i].element ?? 'phys');
+            return;
+          }
           const evs: Ev[] = [];
           for (const t of tgts) {
-            let dd: Defense = 'none';
-            if (local.includes(t.uid)) dd = d;
-            else if (defs[t.uid]) dd = defs[t.uid][hh.i] ?? 'none';
-            else continue; // remote: applied when their result arrives
+            const dd: Defense = local.includes(t.uid) ? d : defs[t.uid]?.[hh.i] ?? 'none';
             evs.push(...E.enemyHit(this.st, plan, hh.i, t.uid, dd));
             this.defenseFx(t.uid, dd, hh.kind, atk.hits[hh.i].element ?? 'phys');
           }
@@ -995,17 +1044,25 @@ export class Battle {
     this.setDefButtons(false);
     this.hint = '';
     for (const l of local) this.link?.sendDef(this.st.turn, l, defs[l]);
-    // remote defenders: wait for their inputs, then apply their hits
-    for (const r of remote) {
-      if (!this.link) break;
-      const d = await this.link.waitDef(this.st.turn, r.uid);
-      defs[r.uid] = d;
-      const evs: Ev[] = [];
-      for (let i = 0; i < atk.hits.length; i++) {
-        evs.push(...E.enemyHit(this.st, plan, i, r.uid, d[i] ?? 'none'));
-        this.defenseFx(r.uid, d[i] ?? 'none', atk.hits[i].kind ?? 'normal', atk.hits[i].element ?? 'phys');
+    if (this.link) {
+      // remote defenders: wait for their inputs (a player who left is played by the host's AI)
+      for (const r of remote) {
+        const got = await Promise.race([this.link.waitDef(this.st.turn, r.uid), this.untilAi(r.uid)]);
+        if (got === 'ai') {
+          defs[r.uid] = E.aiDefense(this.st, plan, r.uid);
+          if (this.link.isHost) this.link.sendDef(this.st.turn, r.uid, defs[r.uid]);
+        } else defs[r.uid] = got;
       }
-      await this.showEvents(evs);
+      for (let i = 0; i < atk.hits.length && this.st.phase === 'turn'; i++) {
+        const evs: Ev[] = [];
+        for (const tid of plan.targets) {
+          const dd = defs[tid]?.[i] ?? 'none';
+          evs.push(...E.enemyHit(this.st, plan, i, tid, dd));
+          if (!local.includes(tid)) this.defenseFx(tid, dd, atk.hits[i].kind ?? 'normal', atk.hits[i].element ?? 'phys');
+        }
+        await this.showEvents(evs);
+        await this.wait(90);
+      }
     }
     await this.wait(200);
     if (this.st.phase === 'turn') {
@@ -1037,7 +1094,7 @@ export class Battle {
       if (!input.pressed(a)) return;
       input.eat(a);
       const t = input.pressAt(a);
-      if (t - d.lastPress < 200) return; // no mashing
+      if (t - d.lastPress < 110) return; // no mashing
       d.lastPress = t;
       d.presses.push({ a: as, t, used: false });
       for (const uid of d.local) {
@@ -1052,7 +1109,7 @@ export class Battle {
     read('jump', 'jump');
     if (input.mouse.clicked) {
       input.mouse.clicked = false;
-      if (now - d.lastPress >= 200) {
+      if (now - d.lastPress >= 110) {
         d.lastPress = now;
         d.presses.push({ a: 'parry', t: input.mouse.clickAt || now, used: false });
         for (const uid of d.local) this.anim(uid, 'parry', 320);
@@ -1338,13 +1395,17 @@ export class Battle {
         audio.sfx('ui_move');
       }
     }
+    let onTarget = false;
     if (input.mouse.moved || input.mouse.clicked) {
       for (let i = 0; i < n; i++) {
         const v = this.v(tg.uids[i]);
-        if (Math.abs(input.mouse.x - v.x) < 60 && input.mouse.y < v.y + 10 && input.mouse.y > this.headY(tg.uids[i]) - 10) tg.i = i;
+        if (Math.abs(input.mouse.x - v.x) < 60 && input.mouse.y < v.y + 10 && input.mouse.y > this.headY(tg.uids[i]) - 10) {
+          tg.i = i;
+          onTarget = true;
+        }
       }
     }
-    if (input.pressed('confirm') || input.mouse.clicked) {
+    if (input.pressed('confirm') || (input.mouse.clicked && (onTarget || tg.all))) {
       input.eat('confirm');
       input.mouse.clicked = false;
       const uid = tg.uids[tg.i];

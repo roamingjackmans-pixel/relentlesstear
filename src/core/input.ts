@@ -163,15 +163,19 @@ class Input {
 
   attach(el: HTMLElement, w: number, h: number): void {
     this.view = { w, h, el };
+    // only text entry swallows game keys (a range slider or a button must not)
     const isField = (t: EventTarget | null): boolean => {
       const e = t as HTMLElement | null;
-      return !!e && (e.tagName === 'INPUT' || e.tagName === 'TEXTAREA' || e.isContentEditable);
+      if (!e) return false;
+      if (e.tagName === 'INPUT') return !['range', 'checkbox', 'radio', 'button', 'submit'].includes((e as HTMLInputElement).type);
+      return e.tagName === 'TEXTAREA' || e.isContentEditable;
     };
     window.addEventListener('keydown', (e) => {
       if (isField(e.target)) return;
       const acts = KEYS[e.code];
       if (!acts) return;
-      if (e.code === 'Tab' || e.code === 'Space' || e.code.startsWith('Arrow') || e.code === 'Backspace') e.preventDefault();
+      // Space/Enter would also click the focused button natively; the UI layer clicks it itself (once)
+      if (e.code === 'Tab' || e.code === 'Space' || e.code === 'Enter' || e.code === 'NumpadEnter' || e.code.startsWith('Arrow') || e.code === 'Backspace') e.preventDefault();
       this.device = 'keyboard';
       if (e.repeat || this.keysDown.has(e.code)) return;
       this.keysDown.add(e.code);
@@ -200,6 +204,11 @@ class Input {
     });
     el.addEventListener('pointerdown', (e) => {
       toLogical(e.clientX, e.clientY);
+      const tgt = e.target as HTMLElement | null;
+      if (tgt && tgt.id !== 'ui' && tgt.closest?.('#ui')) {
+        if (e.pointerType === 'touch') this.device = 'touch';
+        return; // a button or panel took this click
+      }
       if (e.pointerType === 'touch') this.device = 'touch';
       else if (this.device === 'touch') this.device = 'keyboard';
       if (e.button === 2) {

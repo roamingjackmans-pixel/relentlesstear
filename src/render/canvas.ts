@@ -23,6 +23,14 @@ export interface View {
 }
 
 let qualityLow = false;
+/** dynamic resolution: the most backing pixels per logical pixel (lowered while frames are slow) */
+let resCap = 2.2;
+export function setResolutionCap(v: number): void {
+  resCap = Math.max(0.75, Math.min(2.2, v));
+}
+export function resolutionCap(): number {
+  return resCap;
+}
 export function setLowQuality(v: boolean): void {
   qualityLow = v;
 }
@@ -40,7 +48,7 @@ export function fit(view: View, parent: HTMLElement): void {
   view.canvas.style.width = `${cssW}px`;
   view.canvas.style.height = `${cssH}px`;
   const dpr = Math.min(window.devicePixelRatio || 1, qualityLow ? 1 : 2);
-  const backing = Math.max(0.5, Math.min(s * dpr, qualityLow ? 1 : 2.2));
+  const backing = Math.max(0.5, Math.min(s * dpr, qualityLow ? Math.min(1, resCap) : resCap));
   view.scale = backing;
   view.canvas.width = Math.round(W * backing);
   view.canvas.height = Math.round(H * backing);
