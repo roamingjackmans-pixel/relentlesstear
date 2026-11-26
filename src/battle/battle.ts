@@ -317,6 +317,9 @@ export class Battle {
       await this.showEvents(E.endTurn(this.st, u.uid));
       await this.wait(120);
     }
+    this.cancelPick?.();
+    this.aimExit?.();
+    this.setPicking(false);
     this.closeMenu();
     this.qte = null;
     this.def = null;
@@ -354,8 +357,9 @@ export class Battle {
     this.anim(u.uid, 'ready', 0);
     if (this.isLocal(u)) {
       for (;;) {
-        if (this.st.phase !== 'turn') return;
+        if (this.st.phase !== 'turn' || this.ended) return;
         const act = await this.chooseAction(u);
+        if (this.ended) return;
         if (!act || act.k === 'shot') continue; // shots are resolved inside the aim loop
         await this.perform(u, act, null);
         if (keepsTurn(act) && this.st.phase === 'turn') continue;
@@ -568,25 +572,38 @@ export class Battle {
       } else if (sk.target === 'ally') {
         start = cands.reduce((b, c, i) => (c.hp / c.maxHp < cands[b].hp / cands[b].maxHp ? i : b), 0);
       }
-      // the target picker is a layer with no buttons: arrows/confirm are read in update()
-      const holder = h('div', { class: 'passive' });
-      const pop = pushLayer(holder, () => {
+      // the target picker is a layer whose only button is Back (for mouse and touch); arrows/confirm/taps on a
+      // target are read in update(). The menus underneath fade and stop taking clicks, so taps reach the foes behind
+      // them and a second command can't start while this one is still choosing.
+      let done = false;
+      const finish = (uid: string | null): void => {
+        if (done) return;
+        done = true;
         pop();
         this.targeting = null;
-        resolve(null);
-      }, { noFocus: true });
-      this.targeting = {
-        uids: cands.map((c) => c.uid),
-        i: start,
-        all,
-        resolve: (uid) => {
-          pop();
-          this.targeting = null;
-          resolve(uid);
-        },
+        this.cancelPick = null;
+        this.setPicking(false);
+        this.hint = '';
+        resolve(uid);
       };
-      this.hint = all ? `${glyph('confirm')} to use on everyone · ${glyph('back')} back` : `Choose a target · ${glyph('confirm')} confirm · ${glyph('back')} back`;
+      const holder = h('div', { class: 'passive' }, h('button', { class: 'btn small b-tback', on: { click: () => {
+        audio.sfx('ui_back');
+        finish(null);
+      } } }, 'Back'));
+      const pop = pushLayer(holder, () => finish(null), { noFocus: true });
+      this.setPicking(true);
+      this.cancelPick = () => finish(null);
+      this.targeting = { uids: cands.map((c) => c.uid), i: start, all, resolve: (uid) => finish(uid) };
+      const touch = input.device === 'touch';
+      this.hint = all
+        ? touch ? `${sk.name}: tap to use on everyone` : `${glyph('confirm')} to use on everyone · ${glyph('back')} back`
+        : touch ? `${sk.name}: tap a target` : `Choose a target · ${glyph('confirm')} confirm · ${glyph('back')} back`;
     });
+  }
+  /** cancels an open target picker (the fight ended under it) */
+  private cancelPick: (() => void) | null = null;
+  private setPicking(on: boolean): void {
+    document.getElementById('ui')?.classList.toggle('picking', on);
   }
 
   // ------------------------------------------------------------------ free aim
@@ -597,21 +614,24 @@ export class Battle {
     this.aim = { uid: u.uid, x: foe ? this.v(foe.uid).x : 900, y: foe ? this.midY(foe.uid) : 480, on: true };
     this.anim(u.uid, 'shoot', 100000);
     return new Promise((resolve) => {
-      const holder = h('div', { class: 'passive' });
-      const pop = pushLayer(holder, () => {
+      let done = false;
+      const exit = (): void => {
+        if (done) return;
+        done = true;
         pop();
         this.aim = null;
-        this.anim(u.uid, 'ready', 0);
-        this.hint = '';
-        resolve();
-      }, { noFocus: true });
-      this.aimExit = () => {
-        pop();
-        this.aim = null;
+        this.aimExit = null;
         this.anim(u.uid, 'ready', 0);
         this.hint = '';
         resolve();
       };
+      // Done is a button for mouse and touch players (keyboard and pad use Back)
+      const holder = h('div', { class: 'passive' }, h('button', { class: 'btn small b-tback', on: { click: () => {
+        audio.sfx('ui_back');
+        exit();
+      } } }, 'Done'));
+      const pop = pushLayer(holder, exit, { noFocus: true });
+      this.aimExit = exit;
     });
   }
   private aimExit: (() => void) | null = null;
@@ -1452,7 +1472,7 @@ export class Battle {
     a.x = clamp(a.x, 0, W);
     a.y = clamp(a.y, 80, H - 40);
     const u = E.unit(this.st, a.uid);
-    if (u) this.hint = `Aim · ${glyph('confirm')} fire (${E.shotCost(u)} AP, you have ${u.ap}) · ${glyph('back')} done`;
+    if (u) this.hint = input.device === 'touch' ? `Tap to fire (${E.shotCost(u)} AP, you have ${u.ap})` : `Aim · ${glyph('confirm')} fire (${E.shotCost(u)} AP, you have ${u.ap}) · ${glyph('back')} done`;
     if (input.pressed('confirm') || input.mouse.clicked || input.pressed('strike')) {
       input.eat('confirm');
       input.eat('strike');
@@ -1909,6 +1929,9 @@ export class Battle {
 
   destroy(): void {
     this.ended = true;
+    this.cancelPick?.();
+    this.aimExit?.();
+    this.setPicking(false);
     this.closeMenu();
     this.setDefButtons(false);
     this.qte = null;

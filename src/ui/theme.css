@@ -180,6 +180,12 @@ input[type=range] { accent-color: var(--red); width: 100%; }
 .skill .sa { float: right; font-size: 14px; color: var(--red); }
 
 /* ---------------------------------------------------------------- battle UI */
+/* while a target is being chosen the menus step aside (taps reach the foes behind them) and Back appears */
+#ui .b-cmd, #ui .b-sub { transition: opacity 0.15s; }
+#ui.picking .b-cmd, #ui.picking .b-sub { opacity: 0.14; pointer-events: none; }
+.b-tback { position: absolute; left: 50%; top: 162px; transform: translateX(-50%); pointer-events: auto; min-width: 120px; }
+.b-tback:hover, .b-tback:focus-visible { transform: translateX(-50%) translateY(-1px); }
+.b-tback:active { transform: translateX(-50%) translateY(1px); }
 .b-cmd { position: absolute; left: 520px; bottom: 26px; width: 300px; padding: 14px 16px; }
 .b-cmd .who { font-family: var(--sc); font-size: 22px; color: var(--gold2); margin: 0 0 8px 4px; display: flex; justify-content: space-between; }
 .b-cmd .list { display: flex; flex-direction: column; gap: 6px; }
