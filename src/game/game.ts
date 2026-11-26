@@ -602,10 +602,11 @@ export class Game {
     // Try again puts everyone back as they were when the fight began
     const snap = { hp: Object.fromEntries(this.save.roster.map((id) => [id, this.save.chars[id].hpFrac])), tinct: { ...this.save.tinct }, inv: { ...this.save.inv } };
     try {
+      let losses = 0;
       for (;;) {
         const r = await this.fight(encId, o.first ?? null, !!o.noFlee);
         if (r === 'lost' && !o.loseOk) {
-          const again = await this.gameOver();
+          const again = await this.gameOver(++losses);
           if (again) {
             for (const [id, f] of Object.entries(snap.hp)) if (this.save.chars[id as CharId]) this.save.chars[id as CharId].hpFrac = f;
             this.save.tinct = { ...snap.tinct };
@@ -705,7 +706,17 @@ export class Game {
     return result;
   }
 
-  private gameOver(): Promise<boolean> {
+  /** The defeat screen. From the second loss in a row to the same fight it points at unspent points and offers to try
+   *  again one difficulty lower (the setting can be changed back any time in Settings). */
+  private gameOver(losses = 1): Promise<boolean> {
+    const s = this.save;
+    const easier = losses >= 2 && !(this.net && !this.net.isHost) ? ({ unthreaded: 'mender', mender: 'story', story: null } as const)[s.difficulty] : null;
+    const unspent = losses >= 2 ? s.roster.filter((id) => (s.chars[id]?.attrPts ?? 0) > 0 || (s.chars[id]?.sp ?? 0) > 0).map((id) => CHARS[id].short) : [];
+    const tip = unspent.length
+      ? `${unspent.length > 2 ? `${unspent.slice(0, -1).join(', ')} and ${unspent[unspent.length - 1]}` : unspent.join(' and ')} ${unspent.length > 1 ? 'have' : 'has'} points to spend: Menu, then Party.`
+      : losses >= 2
+        ? 'Parry every hit of an attack to strike back with a Counter.'
+        : '';
     return new Promise((res) => {
       let pop: () => void = () => {};
       const el = h(
@@ -713,13 +724,22 @@ export class Game {
         { class: 'panel dark rewards' },
         h('p', { class: 'big', style: 'color:#ff9a8a' }, 'The Thread Snaps'),
         h('p', { class: 'muted' }, 'But a pattern can be woven again.'),
+        tip ? h('p', { style: 'color:#e8c88a;font-size:17px;margin-top:6px' }, tip) : null,
         h(
           'div',
-          { class: 'row', style: 'justify-content:center;margin-top:16px' },
+          { class: 'row', style: 'justify-content:center;margin-top:16px;flex-wrap:wrap' },
           btn('Try again', () => {
             pop();
             res(true);
           }, 'btn gold', { 'data-autofocus': '1' }),
+          easier
+            ? btn(`Try again on ${easier === 'story' ? 'Story' : 'Mender'}`, () => {
+                s.difficulty = easier;
+                toast(`Difficulty: ${easier}. You can change it back in Settings.`);
+                pop();
+                res(true);
+              })
+            : null,
           btn('Back to the Waystitch', () => {
             pop();
             res(false);

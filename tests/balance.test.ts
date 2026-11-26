@@ -31,13 +31,20 @@ const ORDER: { region: string; ch: number; active: CharId[]; roster: CharId[] }[
   { region: 'first_thread', ch: 10, active: ['ash', 'tess', 'maudra', 'rook'], roster: ['ash', 'wick', 'maudra', 'rook', 'tess'] },
 ];
 
-function battlesIn(cmds: Cmd[], out: string[]): void {
+/** fights behind a later option of a choice (the other ending's boss): simulated, but they earn nothing, since a
+ *  player only ever fights one side of a choice */
+const ALT = new Set<string>();
+
+function battlesIn(cmds: Cmd[], out: string[], alt = false): void {
   for (const c of cmds) {
-    if (c.t === 'battle') out.push(c.enc);
-    if (c.t === 'choice') for (const o of c.options) battlesIn(o.cmds, out);
+    if (c.t === 'battle') {
+      out.push(c.enc);
+      if (alt) ALT.add(c.enc);
+    }
+    if (c.t === 'choice') c.options.forEach((o, i) => battlesIn(o.cmds, out, alt || i > 0));
     if (c.t === 'if') {
-      battlesIn(c.then, out);
-      battlesIn(c.else ?? [], out);
+      battlesIn(c.then, out, alt);
+      battlesIn(c.else ?? [], out, alt);
     }
   }
 }
@@ -133,6 +140,7 @@ describe('balance', () => {
     const rows: string[] = [];
     const lost: string[] = [];
     let seed = 1;
+    let atFinal: SaveData | null = null;
     for (const step of ORDER) {
       s.roster = [...step.roster];
       s.active = [...step.active];
@@ -143,6 +151,7 @@ describe('balance', () => {
       const bossNotes: string[] = [];
       for (const f of regionFights(step.region)) {
         gearUp(s, step.ch);
+        if (f.boss && step.region === 'loomspire' && !atFinal) atFinal = structuredClone(s);
         const def = ENCOUNTERS[f.enc];
         const tries = f.boss ? 3 : 1;
         let won = false;
@@ -157,15 +166,34 @@ describe('balance', () => {
         else if (!def.endAtHp) lost.push(`${step.region}/${f.enc}`);
         if (f.boss) {
           const hpLeft = st!.units.filter((u) => u.side === 'party').reduce((a, u) => a + u.hp / u.maxHp, 0) / 4;
-          bossNotes.push(`${f.enc}:${won ? 'W' : 'L'}${Math.round(hpLeft * 100)}%/${st!.turn}t`);
+          bossNotes.push(`${f.enc}@${s.chars.ash.level}:${won ? 'W' : 'L'}${Math.round(hpLeft * 100)}%/${st!.turn}t`);
         }
-        if (st) applyRewards({ ...st, phase: won ? 'won' : st.phase }, s, profile, 'host', def);
+        if (st && !ALT.has(f.enc)) applyRewards({ ...st, phase: won ? 'won' : st.phase }, s, profile, 'host', def);
       }
       const lv = s.active.map((id) => s.chars[id].level).join('/');
       const elv = regionFights(step.region).map((f) => ENEMIES[ENCOUNTERS[f.enc].enemies[0]]?.level ?? 0);
       rows.push(`${step.region.padEnd(15)} party Lv ${lv.padEnd(12)} enemy Lv ${Math.min(...elv)}-${Math.max(...elv)}  wins ${wins}/${fights}  avg turns ${Math.round(turns / Math.max(1, fights))}  ${bossNotes.join(' ')}`);
     }
-    console.log(`\n${rows.join('\n')}\n`);
+    // the final bosses over 20 seeds: at the level the campaign arrives with, and as a player who skipped the optional
+    // fights (2 and 4 levels lower)
+    const sweep: string[] = [];
+    for (const enc of ['b_orrin_final', 'b_weaver']) {
+      const cells: string[] = [];
+      for (const off of [0, -2, -4]) {
+        const base = structuredClone(atFinal!);
+        for (const id of base.roster) base.chars[id].level = Math.max(1, base.chars[id].level + off);
+        let w = 0;
+        let tt = 0;
+        for (let k = 0; k < 20; k++) {
+          const st = simulate(base, enc, 9000 + k);
+          if (st.phase === 'won') w++;
+          tt += st.turn;
+        }
+        cells.push(`@${base.chars.ash.level} ${w * 5}% wins ${Math.round(tt / 20)}t`);
+      }
+      sweep.push(`${enc.padEnd(15)} ${cells.join('   ')}`);
+    }
+    console.log(`\n${rows.join('\n')}\n\nfinal bosses, 20 tries each:\n${sweep.join('\n')}\n`);
     // regular fights should almost never beat the AI party; bosses get three tries
     expect(lost.length, lost.join(', ')).toBeLessThanOrEqual(3);
   }, 120000);

@@ -764,7 +764,7 @@ E('orrin_final_3', 'Orrin, the Tear', 1, 38, { def: 1.05, atk: 1.22, spd: 1.16 }
 }, 'party:orrin');
 
 const WEAVER_LORE = 'The Loom, awake. Not cruel: vast, and sorrowful, and certain that without pattern everything you love comes apart.';
-E('weaver', 'The Weaver', 2.3, 40, { hp: 1.1, def: 1.15 }, 10, {
+E('weaver', 'The Weaver', 2.3, 40, { hp: 0.95, def: 1.15 }, 10, {
   weak: ['dark'],
   resist: ['light', 'thread'],
   immune: ['curse', 'freeze', 'stun'],
@@ -779,7 +779,7 @@ E('weaver', 'The Weaver', 2.3, 40, { hp: 1.1, def: 1.15 }, 10, {
   lore: WEAVER_LORE,
 });
 
-E('weaver_2', 'The Weaver', 2.3, 40, { hp: 1.1, def: 1.1, atk: 1.08, spd: 1.05 }, 10, {
+E('weaver_2', 'The Weaver', 2.3, 40, { hp: 0.95, def: 1.1, atk: 1.08, spd: 1.05 }, 10, {
   weak: ['dark'],
   resist: ['light'],
   immune: ['curse', 'freeze', 'stun'],
@@ -787,7 +787,7 @@ E('weaver_2', 'The Weaver', 2.3, 40, { hp: 1.1, def: 1.1, atk: 1.08, spd: 1.05 }
   attacks: [
     A('many_hands', 'Many Hands', 'lunge', 1000, [...run(0, 190, 7, 0.32), h(1700, 0.9)], 'random2', { weight: 3 }),
     A('shears_of_heaven', 'Shears of Heaven', 'slam', 1100, [h(0, 0.5), h(1000, 1.8, 'unblockable', 'light')], 'one', { weight: 2 }),
-    A('loom_song', 'Loom Song', 'cast', 900, [], 'one', { heal: 0.08, selfStatus: { id: 'regen', turns: 3 }, weight: 1 }),
+    A('loom_song', 'Loom Song', 'cast', 900, [], 'one', { heal: 0.06, weight: 1 }),
     A('weft_and_warp', 'Weft and Warp', 'cast', 950, [...run(0, 210, 5, 0.38, 'magic', 'thread'), h(1500, 0.8, 'jump', 'thread')], 'all', { weight: 2 }),
   ],
   phases: [{ at: 0.33, to: 'weaver_3', line: 'Then let it all come apart. Let you see what you chose.' }],
@@ -795,7 +795,7 @@ E('weaver_2', 'The Weaver', 2.3, 40, { hp: 1.1, def: 1.1, atk: 1.08, spd: 1.05 }
   lore: `${WEAVER_LORE} Its halo is coming apart.`,
 });
 
-E('weaver_3', 'The Weaver, Unweaving', 2.3, 40, { hp: 1.1, def: 1.0, atk: 1.15, spd: 1.12 }, 10, {
+E('weaver_3', 'The Weaver, Unweaving', 2.3, 40, { hp: 0.95, def: 1.0, atk: 1.15, spd: 1.12 }, 10, {
   weak: ['dark', 'thread'],
   resist: ['light'],
   immune: ['curse', 'freeze', 'stun'],
