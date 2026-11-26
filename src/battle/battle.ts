@@ -136,6 +136,19 @@ function keepsTurn(a: PAction): boolean {
   return a.k === 'shot' || (a.k === 'skill' && !!skill(a.id)?.effects?.some((e) => e.k === 'free_shots'));
 }
 
+/** Turn-order portraits, pre-shrunk once (shrinking a full portrait 9 times a frame is wasted work). */
+const smallCache = new Map<string, HTMLCanvasElement>();
+function smallPortrait(id: CharId, outfit: string | null, expr: 'neutral' | 'angry'): HTMLCanvasElement {
+  const key = `${id}|${outfit}|${expr}`;
+  let c = smallCache.get(key);
+  if (!c) {
+    c = makeCanvas(84, 92);
+    ctx2d(c).drawImage(portrait(figureFor(id, outfit), expr), 0, 0, 84, 92);
+    smallCache.set(key, c);
+  }
+  return c;
+}
+
 /** A small round portrait of an enemy for the turn order, drawn once per art. */
 const iconCache = new Map<string, HTMLCanvasElement>();
 function enemyIcon(art: string): HTMLCanvasElement {
@@ -1793,10 +1806,10 @@ export class Battle {
       ctx.fill();
       ctx.clip();
       if (u.side === 'party') {
-        const pc = portrait(figureFor(u.id as CharId, this.game.save.chars[u.id as CharId]?.outfit), 'neutral');
+        const pc = smallPortrait(u.id as CharId, this.game.save.chars[u.id as CharId]?.outfit ?? null, 'neutral');
         ctx.drawImage(pc, cx - r * 1.15, cy - r * 0.95, r * 2.3, r * 2.5);
       } else if (u.art.startsWith('party:')) {
-        const pc = portrait(figureFor(u.art.slice(6) as CharId), 'angry');
+        const pc = smallPortrait(u.art.slice(6) as CharId, null, 'angry');
         ctx.drawImage(pc, cx - r * 1.15, cy - r * 0.95, r * 2.3, r * 2.5);
       } else {
         const ic = enemyIcon(u.art);
