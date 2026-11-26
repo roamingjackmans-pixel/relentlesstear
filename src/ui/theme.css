@@ -145,6 +145,10 @@ input[type=range] { accent-color: var(--red); width: 100%; }
 .tab { padding: 6px 16px; border-radius: 20px; border: 0; cursor: pointer; font-family: var(--sc); font-size: 18px; color: var(--ink2); background: rgba(90,60,30,0.12); }
 .tab.on, .tab:hover, .tab:focus-visible { outline: none; color: var(--paper); background: var(--red); }
 .menu .close { position: absolute; right: 26px; top: 20px; z-index: 2; }
+/* the close cross sits on parchment: ink, not the cream used on dark buttons */
+.menu .close .btn.ghost { color: var(--ink); font-family: system-ui, 'Segoe UI Symbol', sans-serif; box-shadow: inset 0 0 0 1px rgba(90,50,10,0.45); }
+.menu .close .btn.ghost::after { border-color: rgba(90,50,10,0.35); }
+.menu .close .btn.ghost:hover, .menu .close .btn.ghost:focus-visible, .menu .close .btn.ghost.focus { color: var(--paper); }
 .cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
 .ccard { position: relative; padding: 12px; border-radius: 12px; background: rgba(255,252,240,0.55); box-shadow: inset 0 0 0 1px rgba(90,60,30,0.3); cursor: pointer; text-align: left; font-family: var(--serif); color: var(--ink); border: 0; }
 .ccard.on, .ccard:hover, .ccard:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--red), 0 6px 16px rgba(90,40,20,0.25); }

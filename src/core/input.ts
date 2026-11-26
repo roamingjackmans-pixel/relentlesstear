@@ -81,7 +81,9 @@ class Input {
   private keysDown = new Set<string>();
   private padPrev: boolean[] = [];
   private padAxisPrev = { x: 0, y: 0 };
-  device: Device = 'keyboard';
+  /** phones and tablets (a coarse pointer and no fine one) show touch prompts from the first screen */
+  device: Device =
+    typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches && !matchMedia('(any-pointer: fine)').matches ? 'touch' : 'keyboard';
   mouse = { x: 0, y: 0, down: false, clicked: false, clickAt: 0, rightClicked: false, moved: false, wheel: 0 };
   /** logical canvas size and the element's client rect, for converting mouse coordinates */
   private view = { w: 1280, h: 720, el: null as HTMLElement | null };

@@ -27,11 +27,17 @@ function hold(label: string, a: Action, title: string): HTMLButtonElement {
   );
 }
 
+/** Menu / map / talk act on the button's own click: acting on pointerdown opened the menu (or a shop) under the
+ *  finger and the browser's follow-up click then landed on whatever button was now there ("Return to the title?"). */
 function tapBtn(label: string, a: Action, title: string): HTMLButtonElement {
-  return h('button', { title, 'aria-label': title, on: { pointerdown: (e: Event) => {
-    e.preventDefault();
-    input.tap(a);
-  } } }, label);
+  return h('button', { title, 'aria-label': title, on: {
+    click: (e: Event) => {
+      e.preventDefault();
+      (e.currentTarget as HTMLElement).blur();
+      input.tap(a);
+    },
+    contextmenu: (e: Event) => e.preventDefault(),
+  } }, label);
 }
 
 /** Show the pad only on touch devices, only while walking around. Cheap to call every frame. */

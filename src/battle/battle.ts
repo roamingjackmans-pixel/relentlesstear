@@ -1213,6 +1213,9 @@ export class Battle {
             },
             pointerup: () => input.release(a),
             pointerleave: () => input.release(a),
+            // the browser can take the touch back (a system gesture): never leave a defense held
+            pointercancel: () => input.release(a),
+            contextmenu: (e: Event) => e.preventDefault(),
           },
         }, label);
       this.defBtns = h('div', { class: 'def-btns' }, mk('Jump', 'jump'), mk('Dodge', 'dodge'), mk('Parry', 'parry'));
