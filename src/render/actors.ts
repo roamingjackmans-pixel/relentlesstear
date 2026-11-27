@@ -51,7 +51,9 @@ export type WeaponKind = 'needle' | 'shield' | 'spool' | 'shears' | 'bell' | 'pi
 
 const WEAPON_OF: Record<CharId, WeaponKind> = { ash: 'needle', corin: 'shield', wick: 'spool', orrin: 'shears', maudra: 'bell', rook: 'pistol', tess: 'blades' };
 
-/** knee/elbow by 2-bone IK; bend: +1 bends forward (+x), -1 backward */
+/** knee/elbow by 2-bone IK; bend: +1 bends forward (+x, the way the figure faces), -1 backward. For a limb hanging
+ *  down (+y), the forward side of the hip-to-foot line is (+dy, -dx): knees pass +1, elbows -1. (The sign was once
+ *  flipped, which put every knee behind the leg and every elbow in front of the arm.) */
 function ik(ax: number, ay: number, bx: number, by: number, l1: number, l2: number, bend: number): [number, number] {
   const dx = bx - ax;
   const dy = by - ay;
@@ -61,7 +63,7 @@ function ik(ax: number, ay: number, bx: number, by: number, l1: number, l2: numb
   const h = Math.sqrt(Math.max(0, l1 * l1 - a * a));
   const mx = ax + (dx * a) / d;
   const my = ay + (dy * a) / d;
-  return [mx + (bend * -dy * h) / d, my + (bend * dx * h) / d];
+  return [mx + (bend * dy * h) / d, my - (bend * dx * h) / d];
 }
 
 function limb(ctx: CanvasRenderingContext2D, ax: number, ay: number, kx: number, ky: number, bx: number, by: number, w1: number, w2: number, color: string): void {
